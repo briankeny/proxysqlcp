@@ -1,0 +1,2 @@
+# proxysqlcp
+Proxsyql Cpanel setup
