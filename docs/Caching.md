@@ -112,8 +112,10 @@ Create a file
 cat test_queries.sql  <<EOF
 -- Matching queries (should trigger caching)
 SELECT option_value FROM wpa7_options WHERE option_name = 'siteurl' LIMIT 1;
-SELECT OPTION_VALUE FROM WPZY_OPTIONS WHERE OPTION_NAME = 'theme' LIMIT 1;
 SELECT option_value FROM wp_options WHERE option_name = 'active_plugins' LIMIT 0,1;
+
+-- Case sensitive
+SELECT OPTION_VALUE FROM wpzy_options WHERE OPTION_NAME = 'theme' LIMIT 1;
 
 -- Non-matching queries (should NOT trigger caching)
 SELECT * FROM unrelated_table WHERE id = 1;
@@ -283,6 +285,10 @@ Check the query cache status and results
 
 ```sql
 SELECT * FROM stats_mysql_global WHERE Variable_Name LIKE  'Query_Cache%';
+```
+
+```sql
+SELECT * FROM stats_mysql_query_rules;
 ```
 
 Query_Cache_Memory_bytes --total size of stored result in query cache
