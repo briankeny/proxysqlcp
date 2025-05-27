@@ -1,0 +1,43 @@
+- name: Point back ProxySQL to MySQL
+  hosts: sharedHosting
+  become: true
+  gather_facts: false
+  tasks:
+
+    - name: Point ProxySQL to MySQL and adjust MySQL config
+      raw: |
+        set -e
+        echo "Starting configuration..."
+        # Check if the script is run as root
+        if [ "$(id -u)" -ne 0 ]; then
+            echo "This script must be run as root. Please run it with sudo."
+            exit 1
+        fi
+        #Switch Port
+        echo "Configuring ProxySQL client on Admin to use default socket 6032..."
+        mysql -u admin -padmin -h 127.0.0.1 -P6032 --prompt='Admin> ' <<EOF
+        SET mysql-interfaces='127.0.0.1:3306;/var/lib/mysql/mysql.sock';
+        SAVE MYSQL VARIABLES TO DISK;
+        EOF
+        # Switch mysql port to 3307
+        echo "Configuring my.cnf to use port 3307..."
+        sudo sed -i 's/port=3306/port=3307/g' /etc/my.cnf
+        sudo sed -i 's/socket=\/var\/lib\/mysql\/mysql.sock/socket=\/var\/lib\/mysql\/mysql2.sock/g' /etc/my.cnf
+        #Restarting mysql
+        sudo systemctl restart mysqld.service
+        # Restart Proxysql
+        # Remove the old socket
+        echo "Removing the old mysql unix socket..."
+        sudo rm -f /var/lib/mysql/mysql.sock
+        # Grant default ACL to the directory now proxysql can create the socket in this path
+        sudo chown mysql:mysql /var/lib/mysql
+        sudo chmod 775 /var/lib/mysql
+        # Grant acl to proxysql user
+        sudo setfacl -d -m u:proxysql:rwx /var/lib/mysql
+        # Add proxysql user to mysql group
+        sudo usermod -aG mysql proxysql
+        echo "Restarting Proxysql..."
+        sudo systemctl restart proxysql.service
+        echo "Setup complete..."
+      args:
+        executable: /bin/bash
