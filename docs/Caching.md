@@ -27,6 +27,8 @@ INSERT INTO mysql_query_rules (
     3600000,  -- 1 hour in milliseconds
     1
 );
+LOAD MYSQL QUERY RULES TO RUNTIME;
+SAVE MYSQL QUERY RULES TO DISK;
 EOF
 ```
 
@@ -180,12 +182,14 @@ INSERT INTO mysql_query_rules (
     cache_ttl,
     apply
 ) VALUES (
-    20,  -- new rule_id
+    20, 
     1,
     '^(?i)SELECT\s+post_id,\s*meta_key,\s*meta_value\s+FROM\s+`?[a-zA-Z0-9_]+_postmeta`?\s+WHERE\s+post_id\s+IN\s*\(\s*\?\s*\)\s+ORDER\s+BY\s+meta_id\s+ASC\s*$',
     3600000,  -- 1 hour in milliseconds
     1
 );
+LOAD MYSQL QUERY RULES TO RUNTIME;
+SAVE MYSQL QUERY RULES TO DISK;
 ```
 
 ```sql
