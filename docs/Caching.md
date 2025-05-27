@@ -306,7 +306,7 @@ INSERT INTO mysql_query_rules (
 ) VALUES (
     8,
     1,
-    '(?i)^SELECT\\s+t\\.\\*,tt\\.\\*\\s+FROM\\s+`?[a-zA-Z0-9_]+_terms`?\\s+AS\\s+t\\s+INNER\\s+JOIN\\s+`?[a-zA-Z0-9_]+_term_taxonomy`?\\s+AS\\s+tt\\s+ON\\s+t\\.term_id\\s+=\\s+tt\\.term_id\\s+WHERE\\s+t\\.term_id\\s*=\\s*\\?\\s*$',
+    '(?i)^SELECT\\s+t\\.\\*,tt\\.\\*\\s+FROM\\s+`?\\w+_terms`?\\s+AS\\s+t\\s+INNER\\s+JOIN\\s+`?\\w+_term_taxonomy`?\\s+AS\\s+tt\\s+ON\\s+t\\.term_id\\s*=\\s*tt\\.term_id\\s+WHERE\\s+t\\.term_id\\s*=\\s*\\?\\s*$',
     30000,
     1
 );
@@ -319,7 +319,7 @@ INSERT INTO mysql_query_rules (
 ) VALUES (
     9,
     1,
-    '(?i)^SELECT\\s+t\\.\\*,tt\\.\\*\\s+FROM\\s+`?[a-zA-Z0-9_]+_terms`?\\s+AS\\s+t\\s+INNER\\s+JOIN\\s+`?[a-zA-Z0-9_]+_term_taxonomy`?\\s+AS\\s+tt\\s+ON\\s+t\\.term_id\\s+=\\s+tt\\.term_id\\s+WHERE\\s+t\\.term_id\\s+IN\\s*\\(\\s*\\?(\\s*,\\s*\\?)*\\s*\\)\\s*$',
+    '(?i)^SELECT\\s+t\\.\\*,tt\\.\\*\\s+FROM\\s+`?\\w+_terms`?\\s+AS\\s+t\\s+INNER\\s+JOIN\\s+`?\\w+_term_taxonomy`?\\s+AS\\s+tt\\s+ON\\s+t\\.term_id\\s*=\\s*tt\\.term_id\\s+WHERE\\s+t\\.term_id\\s+IN\\s*\\(\\s*\\?(?:\\s*,\\s*\\?)*\\s*\\)\\s*$',
     3600000,
     1
 );
@@ -365,18 +365,26 @@ EOF
 
 ## Prepare and Query Data
 Create term_queries.sql:
+
 ```sh
 cat <<EOF > term_queries.sql
--- Matching "IN" queries (should be cached by rule)
-SELECT t.term_id, t.name FROM wp_terms AS t WHERE t.term_id IN (1) ORDER BY t.term_id;
-SELECT t.term_id, t.name FROM wp_terms AS t WHERE t.term_id IN (2,3) ORDER BY t.term_id;
--- Matching "=" query 
-SELECT t.term_id, t.name FROM wp_terms AS t WHERE t.term_id = 4 ORDER BY t.term_id;
--- Non-matching (different table, should not hit either rule)
--- SELECT * FROM dummy_table WHERE id = 999;
+-- Matching IN queries (rule 9)
+SELECT t.*,tt.* FROM wp_terms AS t 
+INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id 
+WHERE t.term_id IN (1);
+
+SELECT t.*,tt.* FROM wp_terms AS t 
+INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id 
+WHERE t.term_id IN (2,3);
+
+-- Matching = query (rule 8)
+SELECT t.*,tt.* FROM wp_terms AS t 
+INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id 
+WHERE t.term_id = 4;
 EOF
 ```
 Simulate load with mysql slap
+
 ```sh
 mysqlslap \
   --user=stnduser \
