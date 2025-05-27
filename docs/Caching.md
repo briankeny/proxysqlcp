@@ -167,7 +167,6 @@ Both LIMIT ? and LIMIT ?,?.
 False Positives: If non-matching queries (e.g., SELECT * FROM unrelated_table) appear in stats_mysql_query_digest with cache_ttl > 0, 
 Performance: High total_hits for matching queries indicate successful caching. If Query_Cache_count_GET_OK increases, the cache is working.
 
-
 # Rule 002
 This rule takes the following format 
 ```sql
@@ -256,7 +255,7 @@ cat <<EOF > postmeta_queries.sql
 SELECT post_id, meta_key, meta_value FROM wp0p_postmeta WHERE post_id IN (101) ORDER BY meta_id ASC;
 SELECT post_id, meta_key, meta_value FROM wp0p_postmeta WHERE post_id IN (102) ORDER BY meta_id ASC;
 -- Non-matching query
-SELECT post_id, meta_key, meta_value FROM unrelated_postmeta WHERE post_id IN (103) ORDER BY meta_id ASC;
+-- SELECT post_id, meta_key, meta_value FROM unrelated_postmeta WHERE post_id IN (103) ORDER BY meta_id ASC;
 EOF
 ```
 Run mysqlslap:
@@ -281,8 +280,7 @@ SELECT
   SUM(hits) AS total_hits,
   SUM(count_star) AS total_queries
 FROM stats_mysql_query_digest
-WHERE digest = '0xE705224D2739445A'  -- Digest from stats
-OR digest_text LIKE '%wp%postmeta%';
+digest_text LIKE '%wp%postmeta%';
 ```
 ``` Expected Output:
 digest_text	cache_ttl	total_hits	total_queries
@@ -296,18 +294,123 @@ The cache hit count (Query_Cache_count_GET_OK) increases.
 Non-matching queries are ignored by the rule.
 
 
-# Validation check commands
+# Rule 003 & OO4
+```sh
+mysql -u admin -padmin -h 127.0.0.1 -P6032 --prompt='Admin> ' <<EOF
+INSERT INTO mysql_query_rules (
+    rule_id,
+    active,
+    match_digest,
+    cache_ttl,
+    apply
+) VALUES (
+    8,
+    1,
+    '(?i)^SELECT\\s+t\\.\\*,tt\\.\\*\\s+FROM\\s+`?[a-zA-Z0-9_]+_terms`?\\s+AS\\s+t\\s+INNER\\s+JOIN\\s+`?[a-zA-Z0-9_]+_term_taxonomy`?\\s+AS\\s+tt\\s+ON\\s+t\\.term_id\\s+=\\s+tt\\.term_id\\s+WHERE\\s+t\\.term_id\\s*=\\s*\\?\\s*$',
+    30000,
+    1
+);
+INSERT INTO mysql_query_rules (
+    rule_id,
+    active,
+    match_digest,
+    cache_ttl,
+    apply
+) VALUES (
+    9,
+    1,
+    '(?i)^SELECT\\s+t\\.\\*,tt\\.\\*\\s+FROM\\s+`?[a-zA-Z0-9_]+_terms`?\\s+AS\\s+t\\s+INNER\\s+JOIN\\s+`?[a-zA-Z0-9_]+_term_taxonomy`?\\s+AS\\s+tt\\s+ON\\s+t\\.term_id\\s+=\\s+tt\\.term_id\\s+WHERE\\s+t\\.term_id\\s+IN\\s*\\(\\s*\\?(\\s*,\\s*\\?)*\\s*\\)\\s*$',
+    3600000,
+    1
+);
+LOAD MYSQL QUERY RULES TO RUNTIME;
+SAVE MYSQL QUERY RULES TO DISK;
+EOF
+```
 
+## Create Test Table & Insert Data
+Mysql
+```sh
+sudo mysql <<EOF
+USE wordpress_test;
+CREATE TABLE wp_terms (
+    term_id INT PRIMARY KEY,
+    name VARCHAR(100),
+    slug VARCHAR(100),
+    term_group INT
+);
+
+CREATE TABLE wp_term_taxonomy (
+    term_taxonomy_id INT PRIMARY KEY,
+    term_id INT,
+    taxonomy VARCHAR(50),
+    description TEXT,
+    parent INT,
+    count INT,
+    FOREIGN KEY (term_id) REFERENCES wp_terms(term_id)
+);
+INSERT INTO wp_terms (term_id, name, slug, term_group) VALUES
+(1, 'Technology', 'technology', 0),
+(2, 'Science', 'science', 0),
+(3, 'Health', 'health', 0),
+(4, 'Education', 'education', 0);
+
+INSERT INTO wp_term_taxonomy (term_taxonomy_id, term_id, taxonomy, description, parent, count) VALUES
+(10, 1, 'category', 'Tech related content', 0, 5),
+(11, 2, 'category', 'Science related content', 0, 3),
+(12, 3, 'category', 'Health related content', 0, 4),
+(13, 4, 'category', 'Education content', 0, 2);
+EOF
+```
+
+## Prepare and Query Data
+Create term_queries.sql:
+```sh
+cat <<EOF > term_queries.sql
+-- Matching "IN" queries (should be cached by rule)
+SELECT t.term_id, t.name FROM wp_terms AS t WHERE t.term_id IN (1) ORDER BY t.term_id;
+SELECT t.term_id, t.name FROM wp_terms AS t WHERE t.term_id IN (2,3) ORDER BY t.term_id;
+-- Matching "=" query 
+SELECT t.term_id, t.name FROM wp_terms AS t WHERE t.term_id = 4 ORDER BY t.term_id;
+-- Non-matching (different table, should not hit either rule)
+-- SELECT * FROM dummy_table WHERE id = 999;
+EOF
+```
+Simulate load with mysql slap
+```sh
+mysqlslap \
+  --user=stnduser \
+  --password=stnduser \
+  --host=127.0.0.1 \
+  --port=3306 \
+  --concurrency=50 \
+  --iterations=100 \
+  --query=term_queries.sql \
+  --create-schema=wordpress_test
+```
+## Verification 
+Run this to confirm match/caching behavior:
+
+```sql
+SELECT
+  digest_text,
+  cache_ttl,
+  SUM(hits) AS total_hits,
+  SUM(count_star) AS total_queries
+FROM stats_mysql_query_digest
+WHERE digest_text LIKE '%term_taxonomy%' OR digest_text LIKE '%unrelated_table%'
+GROUP BY digest_text;
+```
+
+# General Validation check commands
 Check the query cache status and results
-
 ```sql
 SELECT * FROM stats_mysql_global WHERE Variable_Name LIKE  'Query_Cache%';
 ```
-
+Check the query cache hits stats
 ```sql
 SELECT * FROM stats_mysql_query_rules;
 ```
-
 Query_Cache_Memory_bytes --total size of stored result in query cache
 Query_Cache_Count_GET -- total number of get requests executed against the Query cache
 Query_Cache_count_GET_OK -- total number of succesful get requests against the Query Cache
