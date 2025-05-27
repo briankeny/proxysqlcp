@@ -217,12 +217,16 @@ Run these queries through ProxySQL to validate the rule:
 1. Test 1: Matching Query
 ```sql
 SELECT post_id, meta_key, meta_value FROM wp0p_postmeta WHERE post_id IN (101) ORDER BY meta_id ASC;
+```
+```
 Expected Result: Rule matches, query is cached.
 ```
 
 2. Test 2: Case-Insensitive Match
 ```sql
 SELECT POST_ID, META_KEY, META_VALUE FROM WP0P_POSTMETA WHERE POST_ID IN (102) ORDER BY META_ID ASC;
+```
+```
 Expected Result: Rule matches due to (?i).
 ```
 
@@ -235,12 +239,14 @@ Expected Result: Rule does NOT match.
 ## 4. Simulate Load with mysqlslap
 Create a test file postmeta_queries.sql:
 
-```sql
+```sh
+cat postmeta_queries.sql <<EOF
 -- Matching queries
 SELECT post_id, meta_key, meta_value FROM wp0p_postmeta WHERE post_id IN (101) ORDER BY meta_id ASC;
 SELECT post_id, meta_key, meta_value FROM wp0p_postmeta WHERE post_id IN (102) ORDER BY meta_id ASC;
 -- Non-matching query
 SELECT post_id, meta_key, meta_value FROM unrelated_postmeta WHERE post_id IN (103) ORDER BY meta_id ASC;
+EOF
 ```
 Run mysqlslap:
 ```bash
@@ -250,7 +256,7 @@ mysqlslap \
   --host=127.0.0.1 \
   --port=3306 \
   --concurrency=50 \
-  --iterations=10 \
+  --iterations=100 \
   --query=postmeta_queries.sql \
   --create-schema=wordpress_test
 ```
