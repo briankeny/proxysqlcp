@@ -6,6 +6,10 @@ This rule takes the following pattern
 ```sql
 SELECT option_value FROM wpeudu_options WHERE option_name = ? LIMIT ?
 ```
+or 
+```sql
+SELECT option_value FROM zclk_options WHERE option_name = ? LIMIT ?
+```
 Let us add it to proxysql
 
 ```sh
@@ -19,7 +23,7 @@ INSERT INTO mysql_query_rules (
 ) VALUES (
     10,
     1,
-    '(?i)^SELECT\s+.*option_value.*\s+FROM\s+`?wp[a-zA-Z0-9_]*_options`?\s+WHERE\s+option_name\s*=\s*\?\s+LIMIT\s*\?(?:\s*,\s*\?)?\s*$',
+    '(?i)^SELECT\s+.*option_value.*\s+FROM\s+`?[a-zA-Z0-9_]*_options`?\s+WHERE\s+option_name\s*=\s*\?\s+LIMIT\s*\?(?:\s*,\s*\?)?\s*$',
     3600000,  -- 1 hour in milliseconds
     1
 );
