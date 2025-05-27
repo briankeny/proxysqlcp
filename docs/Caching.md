@@ -213,6 +213,7 @@ EOF
 -- Insert sample data to mysql
 ```sh
 sudo mysql <<EOF
+USE wordpress_test;
 INSERT INTO wp0p_postmeta (meta_id, post_id, meta_key, meta_value) VALUES
 (1, 101, 'color', 'red'),
 (2, 101, 'size', 'large'),
