@@ -174,7 +174,9 @@ This rule takes the following format
 SELECT post_id,meta_key,meta_value FROM wpgc_postmeta WHERE post_id IN (?) ORDER BY meta_id ASC
 ```
 ## 1. Create the Rule 
-```sql
+Proxysql Admin
+```sh
+mysql -u admin -padmin -h 127.0.0.1 -P6032 --prompt='Admin> ' <<EOF
 INSERT INTO mysql_query_rules (
     rule_id,
     active,
@@ -190,13 +192,13 @@ INSERT INTO mysql_query_rules (
 );
 LOAD MYSQL QUERY RULES TO RUNTIME;
 SAVE MYSQL QUERY RULES TO DISK;
+EOF
 ```
+Mysql
 
-```sql
+```sh 
+sudo mysql <<EOF
 USE wordpress_test;
-```
-
-```sql
 -- Create the table
 CREATE TABLE IF NOT EXISTS wp0p_postmeta (
   meta_id BIGINT PRIMARY KEY,
@@ -204,9 +206,11 @@ CREATE TABLE IF NOT EXISTS wp0p_postmeta (
   meta_key VARCHAR(255),
   meta_value LONGTEXT
 );
+EOF
 ```
+
 ## 2.Insert sample Data
--- Insert sample data
+-- Insert sample data to mysql
 ```sql
 INSERT INTO wp0p_postmeta (meta_id, post_id, meta_key, meta_value) VALUES
 (1, 101, 'color', 'red'),
