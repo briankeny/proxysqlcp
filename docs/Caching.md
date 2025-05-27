@@ -111,7 +111,7 @@ Increased hits for repeated identical queries.
 # Step 1: Prepare Test SQL File
 Create a file
 ```sh
-cat test_queries.sql  <<EOF
+cat <<EOF > test_queries.sql
 -- Matching queries (should trigger caching)
 SELECT option_value FROM wpa7_options WHERE option_name = 'siteurl' LIMIT 1;
 SELECT option_value FROM wp_options WHERE option_name = 'active_plugins' LIMIT 0,1;
@@ -251,7 +251,7 @@ Expected Result: Rule does NOT match.
 Create a test file postmeta_queries.sql:
 
 ```sh
-cat postmeta_queries.sql <<EOF
+cat <<EOF > postmeta_queries.sql
 -- Matching queries
 SELECT post_id, meta_key, meta_value FROM wp0p_postmeta WHERE post_id IN (101) ORDER BY meta_id ASC;
 SELECT post_id, meta_key, meta_value FROM wp0p_postmeta WHERE post_id IN (102) ORDER BY meta_id ASC;
