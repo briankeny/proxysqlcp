@@ -52,7 +52,7 @@ sub describe {
     ];
 }
 
-sub _log_to_file {
+sub log_to_file {
     my ($message) = @_;
     my $timestamp = strftime("%Y-%m-%d %H:%M:%S", localtime());
     
@@ -63,78 +63,78 @@ sub _log_to_file {
 }
 
 sub switch_to_mysql {
-    _log_to_file("Switching to direct MySQL connection");
+    log_to_file("Switching to direct MySQL connection");
 
     # Fix socket permissions
     if (-e "/var/lib/mysql/mysql.sock") {
         system("sudo chown mysql:mysql /var/lib/mysql/mysql.sock") == 0
-            or _log_to_file("Failed to chown mysql.sock: $?");
+            or log_to_file("Failed to chown mysql.sock: $?");
         system("sudo chmod 777 /var/lib/mysql/mysql.sock") == 0
-            or _log_to_file("Failed to chmod mysql.sock: $?");
+            or log_to_file("Failed to chmod mysql.sock: $?");
     } else {
-        _log_to_file("MySQL socket /var/lib/mysql/mysql.sock does not exist");
+        log_to_file("MySQL socket /var/lib/mysql/mysql.sock does not exist");
     }
 
     # Create symlink to MySQL socket
     if (-e "/var/lib/mysql/mysql2.sock") {
         system("sudo ln -sf /var/lib/mysql/mysql2.sock /var/lib/mysql/mysql.sock") == 0
-            or _log_to_file("Failed to create symlink for mysql.sock: $?");
+            or log_to_file("Failed to create symlink for mysql.sock: $?");
     } else {
-        _log_to_file("MySQL socket /var/lib/mysql/mysql2.sock does not exist");
+        log_to_file("MySQL socket /var/lib/mysql/mysql2.sock does not exist");
     }
 
     # Redirect traffic from port 3306 to 3307
     system("sudo iptables -t nat -A PREROUTING -p tcp --dport 3306 -j REDIRECT --to-ports 3307") == 0
-        or _log_to_file("Failed to redirect PREROUTING 3306 to 3307: $?");
+        or log_to_file("Failed to redirect PREROUTING 3306 to 3307: $?");
     system("sudo iptables -t nat -A OUTPUT -p tcp --dport 3306 -j REDIRECT --to-ports 3307") == 0
-        or _log_to_file("Failed to redirect OUTPUT 3306 to 3307: $?");
+        or log_to_file("Failed to redirect OUTPUT 3306 to 3307: $?");
 }
 
 sub revert_to_proxysql {
-   _log_to_file("Reverting to ProxySQL operation");
+   log_to_file("Reverting to ProxySQL operation");
 
     # Restore socket ownership
     if (-e "/var/lib/mysql/mysql.sock") {
         system("sudo chown proxysql:proxysql /var/lib/mysql/mysql.sock") == 0
-            or _log_to_file("Failed to chown mysql.sock to proxysql: $?");
+            or log_to_file("Failed to chown mysql.sock to proxysql: $?");
     }
 
     # Remove symlink
     if (-l "/var/lib/mysql/mysql.sock") {
         system("sudo unlink /var/lib/mysql/mysql.sock") == 0
-            or _log_to_file("Failed to unlink mysql.sock: $?");
+            or log_to_file("Failed to unlink mysql.sock: $?");
     }
 
     # Restart ProxySQL
     system("sudo systemctl restart proxysql") == 0
-        or _log_to_file("Failed to restart ProxySQL: $?");
+        or log_to_file("Failed to restart ProxySQL: $?");
     
     # Remove port redirections
     system("sudo iptables -t nat -D PREROUTING -p tcp --dport 3306 -j REDIRECT --to-ports 3307") == 0
-        or _log_to_file("Failed to remove PREROUTING redirection: $?");
+        or log_to_file("Failed to remove PREROUTING redirection: $?");
     system("sudo iptables -t nat -D OUTPUT -p tcp --dport 3306 -j REDIRECT --to-ports 3307") == 0
-        or _log_to_file("Failed to remove OUTPUT redirection: $?");
+        or log_to_file("Failed to remove OUTPUT redirection: $?");
 
 }
 
 sub pre_restore {
     my ($context, $data) = @_;
-   _log_to_file("Starting pre-restore actions for restorepkg");
+   log_to_file("Starting pre-restore actions for restorepkg");
     switch_to_mysql();
-   _log_to_file("Switch to MySQL complete");
+   log_to_file("Switch to MySQL complete");
 }
 
 sub post_restore {
     my ($context, $data) = @_;
-   _log_to_file("Starting post-restore actions for restorepkg");
+   log_to_file("Starting post-restore actions for restorepkg");
     _sync_all_mysql_users();
-   _log_to_file("ProxySQL user sync complete");
+   log_to_file("ProxySQL user sync complete");
     revert_to_proxysql();
-   _log_to_file("ProxySQL operation restored");
+   log_to_file("ProxySQL operation restored");
 }
 
 sub _sync_all_mysql_users {
-   _log_to_file("Starting MySQL to ProxySQL user synchronization");
+   log_to_file("Starting MySQL to ProxySQL user synchronization");
 
     # Connect to MySQL
     my $mysql_dsn = "DBI:mysql:database=mysql;host=$mysql_host;port=$mysql_port";
@@ -143,7 +143,7 @@ sub _sync_all_mysql_users {
         AutoCommit => 1,
         PrintError => 0
     }) or do {
-       _log_to_file("Cannot connect to MySQL: $DBI::errstr");
+       log_to_file("Cannot connect to MySQL: $DBI::errstr");
         return;
     };
 
@@ -154,14 +154,14 @@ sub _sync_all_mysql_users {
         AutoCommit => 1,
         PrintError => 0
     }) or do {
-       _log_to_file("Cannot connect to ProxySQL: $DBI::errstr");
+       log_to_file("Cannot connect to ProxySQL: $DBI::errstr");
         return;
     };
 
     # Get MySQL users with hashed passwords
     my $sth = $mysql_dbh->prepare("SELECT User, authentication_string FROM mysql.user WHERE Host = 'localhost' AND authentication_string != ''");
     unless ($sth && $sth->execute()) {
-       _log_to_file("Failed to query MySQL users: " . ($mysql_dbh->errstr || "Unknown error"));
+       log_to_file("Failed to query MySQL users: " . ($mysql_dbh->errstr || "Unknown error"));
         $mysql_dbh->disconnect();
         $proxysql_dbh->disconnect();
         return;
@@ -169,7 +169,7 @@ sub _sync_all_mysql_users {
 
     while (my ($username, $password_hash) = $sth->fetchrow_array) {
         next unless $username && $password_hash;
-       _log_to_file("Syncing user: $username");
+       log_to_file("Syncing user: $username");
 
         # Update ProxySQL's mysql_users
         eval {
@@ -179,7 +179,7 @@ sub _sync_all_mysql_users {
             );
         };
         if ($@) {
-           _log_to_file("Failed to sync user $username to ProxySQL: $@");
+           log_to_file("Failed to sync user $username to ProxySQL: $@");
             next;
         }
     }
@@ -191,12 +191,12 @@ sub _sync_all_mysql_users {
         $proxysql_dbh->do("SAVE MYSQL USERS TO DISK");
     };
     if ($@) {
-       _log_to_file("Failed to apply ProxySQL changes: $@");
+       log_to_file("Failed to apply ProxySQL changes: $@");
     }
 
     $mysql_dbh->disconnect();
     $proxysql_dbh->disconnect();
-   _log_to_file("MySQL to ProxySQL user synchronization completed");
+   log_to_file("MySQL to ProxySQL user synchronization completed");
 }
 
 1;

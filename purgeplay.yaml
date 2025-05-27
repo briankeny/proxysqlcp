@@ -19,6 +19,12 @@
         SET mysql-interfaces='127.0.0.1:6033;/tmp/proxysql.sock';
         SAVE MYSQL VARIABLES TO DISK;
         EOF
+      args:
+        executable: /bin/bash
+
+    - name: Revert Socket and Permissions to MySQL
+      raw: |
+        set +e
         # Remove default ACL from the directory
         sudo setfacl -d -x u:proxysql /var/lib/mysql
         # Remove proxysql ownership from the directory
@@ -59,6 +65,7 @@
 
     - name: Remove cPanel Hook
       raw: |
+        set +e
         echo "Starting cpanel hook script..."
         # Check if the script is run as root
         if [ "$(id -u)" -ne 0 ]; then
@@ -68,6 +75,22 @@
         echo "Removing cpanel hook..."
         # Removing the hook
         sudo /usr/local/cpanel/bin/manage_hooks delete module Cpanel::ProxysqlHook
+        echo "Cpanel hook removal complete..."
+      args:
+        executable: /bin/bash
+
+    - name: Remove ProxySQL Restore Hook
+      raw: |
+        set +e
+        echo "Starting cpanel hook script..."
+        # Check if the script is run as root
+        if [ "$(id -u)" -ne 0 ]; then
+            echo "This script must be run as root. Please run it with sudo."
+            exit 1
+        fi
+        echo "Removing cpanel hook..."
+        # Removing the hook
+        sudo /usr/local/cpanel/bin/manage_hooks delete module Cpanel::ProxyRestoreHook
         echo "Cpanel hook removal complete..."
       args:
         executable: /bin/bash
