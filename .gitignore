@@ -1,3 +1,8 @@
-ansy
+ansy*
 script.sh
 inventory.ini
+
+# Ignore files in the playbooks directory
+playbooks/ansy*
+playbooks/ansible.cfg
+playbooks/inventory.ini
