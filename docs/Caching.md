@@ -211,12 +211,14 @@ EOF
 
 ## 2.Insert sample Data
 -- Insert sample data to mysql
-```sql
+```sh
+sudo mysql <<EOF
 INSERT INTO wp0p_postmeta (meta_id, post_id, meta_key, meta_value) VALUES
 (1, 101, 'color', 'red'),
 (2, 101, 'size', 'large'),
 (3, 102, 'color', 'blue'),
 (4, 103, 'weight', '5kg');
+EOF
 ```
 
 # 3. Test Queries
