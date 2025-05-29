@@ -300,6 +300,9 @@ This rule takes the following pattern
 SELECT t.*,tt.* FROM wprw_terms AS t INNER JOIN wprw_term_taxonomy AS tt ON t.term_id = tt.term_id WHERE t.term_id = ?
 ```
 Create the rule
+```sql
+'(?i)^SELECT\\s+t\\.\\*,tt\\.\\*\\s+FROM\\s+[a-zA-Z0-9]+_terms\\s+AS\\s+t\\s+INNER\\s+JOIN\\s+`?[a-zA-Z0-9]+_term_taxonomy`?\\s+AS\\s+tt\\s+ON\\s+t\\.term_id\\s+=\\s+tt\\.term_id\\s+WHERE\\s+t\\.term_id\\s+=\\s+\\?$
+```
 ```sh
 mysql -u admin -padmin -h 127.0.0.1 -P6032 --prompt='Admin> ' <<EOF
 INSERT INTO mysql_query_rules (
@@ -311,7 +314,7 @@ INSERT INTO mysql_query_rules (
 ) VALUES (
     8,
     1,
-    '(?i)^SELECT t\.\*,tt\.\* FROM [a-zA-Z0-9]+_terms AS t INNER JOIN [a-zA-Z0-9]+_term_taxonomy AS tt ON t\.term_id = tt\.term_id WHERE t\.term_id[ ]*=\?$',
+    '(?i)^SELECT\s+t\.\*,tt\.\*\s+FROM\s+[a-zA-Z0-9]+_terms\s+AS\s+t\s+INNER\s+JOIN\s+`?[a-zA-Z0-9]+_term_taxonomy`?\s+AS\s+tt\s+ON\s+t\.term_id\s+=\s+tt\.term_id\s+WHERE\s+t\.term_id\s+=\s+\?$',
     30000,
     1
 );
