@@ -295,6 +295,11 @@ Non-matching queries are ignored by the rule.
 
 
 # Rule 003 & OO4
+This rule takes the following pattern
+```sql
+SELECT t.*,tt.* FROM wprw_terms AS t INNER JOIN wprw_term_taxonomy AS tt ON t.term_id = tt.term_id WHERE t.term_id = ?
+```
+Create the rule
 ```sh
 mysql -u admin -padmin -h 127.0.0.1 -P6032 --prompt='Admin> ' <<EOF
 INSERT INTO mysql_query_rules (
@@ -306,10 +311,25 @@ INSERT INTO mysql_query_rules (
 ) VALUES (
     8,
     1,
-    '(?i)^SELECT\\s+t\\.\\*,tt\\.\\*\\s+FROM\\s+`?\\w+_terms`?\\s+AS\\s+t\\s+INNER\\s+JOIN\\s+`?\\w+_term_taxonomy`?\\s+AS\\s+tt\\s+ON\\s+t\\.term_id\\s*=\\s*tt\\.term_id\\s+WHERE\\s+t\\.term_id\\s*=\\s*\\?\\s*$',
+    '(?i)^SELECT t\.\*,tt\.\* FROM [a-zA-Z0-9]+_terms AS t INNER JOIN [a-zA-Z0-9]+_term_taxonomy AS tt ON t\.term_id = tt\.term_id WHERE t\.term_id[ ]*=\?$',
     30000,
     1
 );
+LOAD MYSQL QUERY RULES TO RUNTIME;
+SAVE MYSQL QUERY RULES TO DISK;
+EOF
+```
+This rule follows the following pattern 
+```sql
+SELECT t.*,tt.* FROM wprw_terms AS t INNER JOIN wprw_term_taxonomy AS tt ON t.term_id = tt.term_id WHERE t.term_id IN (?,?,?,...)
+```
+or
+```sql
+SELECT t.*,tt.* FROM wp6l_terms AS t INNER JOIN wp6l_term_taxonomy AS tt ON t.term_id = tt.term_id WHERE t.term_id IN (?)
+```
+Create the rule on proxysql
+```sh
+mysql -u admin -padmin -h 127.0.0.1 -P6032 --prompt='Admin> ' <<EOF
 INSERT INTO mysql_query_rules (
     rule_id,
     active,
@@ -319,7 +339,7 @@ INSERT INTO mysql_query_rules (
 ) VALUES (
     9,
     1,
-    '(?i)^SELECT\\s+t\\.\\*,tt\\.\\*\\s+FROM\\s+`?\\w+_terms`?\\s+AS\\s+t\\s+INNER\\s+JOIN\\s+`?\\w+_term_taxonomy`?\\s+AS\\s+tt\\s+ON\\s+t\\.term_id\\s*=\\s*tt\\.term_id\\s+WHERE\\s+t\\.term_id\\s+IN\\s*\\(\\s*\\?(?:\\s*,\\s*\\?)*\\s*\\)\\s*$',
+    '(?i)^SELECT t\.\*,tt\.\* FROM [a-z0-9]+_terms AS t INNER JOIN [a-z0-9]+_term_taxonomy AS tt ON t\.term_id = tt\.term_id WHERE t\.term_id[ ]*IN[ ]*\([ ]*\?(?:[ ]*,[ ]*\?)*[ ]*\)$',
     3600000,
     1
 );

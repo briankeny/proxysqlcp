@@ -115,7 +115,7 @@ sub switch_to_mysql {
 sub revert_to_proxysql {
    log_to_file("Reverting to ProxySQL operation");
 
-    # Restore socket ownership
+    # Restore socket ownership to Proxysql
     if (-e "/var/lib/mysql/mysql.sock") {
         system("sudo chown proxysql:proxysql /var/lib/mysql/mysql.sock") == 0
             or log_to_file("Failed to chown mysql.sock to proxysql: $?");
@@ -125,6 +125,14 @@ sub revert_to_proxysql {
     if (-l "/var/lib/mysql/mysql.sock") {
         system("sudo unlink /var/lib/mysql/mysql.sock") == 0
             or log_to_file("Failed to unlink mysql.sock: $?");
+    }
+
+   # Restore socket ownership
+    if (-e "/var/lib/mysql/mysql2.sock") {
+        system("sudo chown mysql:mysql /var/lib/mysql/mysql2.sock") == 0
+            or log_to_file("Failed to chown mysql2.sock to mysql: $?");
+        system("sudo chmod 777 /var/lib/mysql/mysql2.sock") == 0
+            or log_to_file("Failed to update permissions for mysql2.sock to 777 $?");
     }
 
     # Restart ProxySQL
@@ -156,7 +164,7 @@ sub post_restore {
 }
 
 sub _sync_all_mysql_users {
-   log_to_file("Starting MySQL to ProxySQL user synchronization");
+    log_to_file("Starting MySQL to ProxySQL user synchronization");
 
     # Connect to MySQL
     my $mysql_dsn = "DBI:mysql:database=mysql;host=$mysql_host;port=$mysql_port";
@@ -165,10 +173,10 @@ sub _sync_all_mysql_users {
         AutoCommit => 1,
         PrintError => 0
     }) or do {
-       log_to_file("Cannot connect to MySQL: $DBI::errstr");
+        log_to_file("Cannot connect to MySQL: $DBI::errstr");
         return;
     };
-
+    
     # Connect to ProxySQL
     my $proxysql_dsn = "DBI:mysql:database=$proxysql_admin_db;host=$proxysql_admin_host;port=$proxysql_admin_port";
     my $proxysql_dbh = DBI->connect($proxysql_dsn, $proxysql_admin_user, $proxysql_admin_pass, {
@@ -176,14 +184,14 @@ sub _sync_all_mysql_users {
         AutoCommit => 1,
         PrintError => 0
     }) or do {
-       log_to_file("Cannot connect to ProxySQL: $DBI::errstr");
+        log_to_file("Cannot connect to ProxySQL: $DBI::errstr");
         return;
     };
-
+    
     # Get MySQL users with hashed passwords
     my $sth = $mysql_dbh->prepare("SELECT User, authentication_string FROM mysql.user WHERE Host = 'localhost' AND authentication_string != ''");
     unless ($sth && $sth->execute()) {
-       log_to_file("Failed to query MySQL users: " . ($mysql_dbh->errstr || "Unknown error"));
+        log_to_file("Failed to query MySQL users: " . ($mysql_dbh->errstr || "Unknown error"));
         $mysql_dbh->disconnect();
         $proxysql_dbh->disconnect();
         return;
@@ -191,8 +199,8 @@ sub _sync_all_mysql_users {
 
     while (my ($username, $password_hash) = $sth->fetchrow_array) {
         next unless $username && $password_hash;
-       log_to_file("Syncing user: $username");
-
+        log_to_file("Syncing user: $username");
+        
         # Update ProxySQL's mysql_users
         eval {
             $proxysql_dbh->do(
@@ -201,24 +209,25 @@ sub _sync_all_mysql_users {
             );
         };
         if ($@) {
-           log_to_file("Failed to sync user $username to ProxySQL: $@");
+            log_to_file("Failed to sync user $username to ProxySQL: $@");
             next;
         }
     }
     $sth->finish();
-
+    
     # Apply ProxySQL changes
     eval {
         $proxysql_dbh->do("LOAD MYSQL USERS TO RUNTIME");
         $proxysql_dbh->do("SAVE MYSQL USERS TO DISK");
     };
-    if ($@) {
-       log_to_file("Failed to apply ProxySQL changes: $@");
-    }
 
+    if ($@) {
+        log_to_file("Failed to apply ProxySQL changes: $@");
+    }
+    
     $mysql_dbh->disconnect();
     $proxysql_dbh->disconnect();
-   log_to_file("MySQL to ProxySQL user synchronization completed");
+    log_to_file("MySQL to ProxySQL user synchronization completed");
 }
 
 1;

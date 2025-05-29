@@ -26,7 +26,7 @@
         echo "Writing ProxySQL hook module..."
         cat <<'EOF' > /usr/local/cpanel/Cpanel/ProxysqlHook.pm
         #!/usr/bin/perl
-
+        
         package Cpanel::ProxysqlHook;
 
         use strict;

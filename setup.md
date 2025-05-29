@@ -1,2 +1,1 @@
-ansible-playbook -i inventory.ini proxysetup.yaml --check -v 
-
+ansible-playbook -i inventory.ini proxyconfplay.yaml --check -v 

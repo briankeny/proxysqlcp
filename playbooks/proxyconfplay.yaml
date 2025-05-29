@@ -501,7 +501,7 @@
         -- multiplexing
         SET mysql-multiplexing = 1;
         -- Optimize connection
-        SET mysql-max_transaction_time = 5000;
+        SET mysql-max_transaction_time = 50000;
         -- Cache ttl
         SET mysql-query_cache_ttl=60000;
         -- Default Cache Size 128 MB
@@ -642,10 +642,9 @@
       args:      
         executable: /bin/bash
 
-    - name: Register Restore Hook to Cpanel
+    - name: Register RestoreHook to Cpanel
       raw: |
         set -e
-
         echo "Adding cPanel ProxySQL Restore Sync hook..."
         [ "$(id -u)" -ne 0 ] && { echo "Run as root: sudo $0"; exit 1; }
 
@@ -656,7 +655,6 @@
                 /usr/local/cpanel/3rdparty/bin/perl -MCPAN -e "CPAN::Shell->install(\"$module\")"
             }
         done
-
         echo "Creating module directory..."
         mkdir -p /usr/local/cpanel/Cpanel || exit 1
 
@@ -675,8 +673,7 @@
         use DBI;
         use File::Path qw(make_path);
         use POSIX qw(strftime);
-
-
+        
         # ProxySQL Configuration
         my $proxysql_admin_host = '127.0.0.1';
         my $proxysql_admin_port = '6032';
@@ -758,7 +755,7 @@
         }
 
         sub revert_to_proxysql {
-        log_to_file("Reverting to ProxySQL operation");
+            log_to_file("Reverting to ProxySQL operation");
 
             # Restore socket ownership
             if (-e "/var/lib/mysql/mysql.sock") {
@@ -772,6 +769,14 @@
                     or log_to_file("Failed to unlink mysql.sock: $?");
             }
 
+            # Restore socket ownership
+            if (-e "/var/lib/mysql/mysql2.sock") {
+                system("sudo chown mysql:mysql /var/lib/mysql/mysql2.sock") == 0
+                    or log_to_file("Failed to chown mysql2.sock to mysql: $?");
+                system("sudo chmod 777 /var/lib/mysql/mysql2.sock") == 0
+                    or log_to_file("Failed to update permissions for mysql2.sock to 777 $?");
+            }
+
             # Restart ProxySQL
             system("sudo systemctl restart proxysql") == 0
                 or log_to_file("Failed to restart ProxySQL: $?");
@@ -781,27 +786,26 @@
                 or log_to_file("Failed to remove PREROUTING redirection: $?");
             system("sudo iptables -t nat -D OUTPUT -p tcp --dport 3306 -j REDIRECT --to-ports 3307") == 0
                 or log_to_file("Failed to remove OUTPUT redirection: $?");
-
         }
 
         sub pre_restore {
             my ($context, $data) = @_;
-        log_to_file("Starting pre-restore actions for restorepkg");
+            log_to_file("Starting pre-restore actions for restorepkg");
             switch_to_mysql();
-        log_to_file("Switch to MySQL complete");
+            log_to_file("Switch to MySQL complete");
         }
 
         sub post_restore {
             my ($context, $data) = @_;
-        log_to_file("Starting post-restore actions for restorepkg");
+            log_to_file("Starting post-restore actions for restorepkg");
             _sync_all_mysql_users();
-        log_to_file("ProxySQL user sync complete");
+            log_to_file("ProxySQL user sync complete");
             revert_to_proxysql();
-        log_to_file("ProxySQL operation restored");
+            log_to_file("ProxySQL operation restored");
         }
 
         sub _sync_all_mysql_users {
-        log_to_file("Starting MySQL to ProxySQL user synchronization");
+            log_to_file("Starting MySQL to ProxySQL user synchronization");
 
             # Connect to MySQL
             my $mysql_dsn = "DBI:mysql:database=mysql;host=$mysql_host;port=$mysql_port";
@@ -810,7 +814,7 @@
                 AutoCommit => 1,
                 PrintError => 0
             }) or do {
-            log_to_file("Cannot connect to MySQL: $DBI::errstr");
+                log_to_file("Cannot connect to MySQL: $DBI::errstr");
                 return;
             };
 
@@ -821,54 +825,37 @@
                 AutoCommit => 1,
                 PrintError => 0
             }) or do {
-            log_to_file("Cannot connect to ProxySQL: $DBI::errstr");
+                log_to_file("Cannot connect to ProxySQL: $DBI::errstr");
                 return;
             };
 
             # Get MySQL users with hashed passwords
             my $sth = $mysql_dbh->prepare("SELECT User, authentication_string FROM mysql.user WHERE Host = 'localhost' AND authentication_string != ''");
             unless ($sth && $sth->execute()) {
-            log_to_file("Failed to query MySQL users: " . ($mysql_dbh->errstr || "Unknown error"));
+                log_to_file("Failed to query MySQL users: " . ($mysql_dbh->errstr || "Unknown error"));
                 $mysql_dbh->disconnect();
                 $proxysql_dbh->disconnect();
                 return;
             }
-
-            while (my ($username, $password_hash) = $sth->fetchrow_array) {
-                next unless $username && $password_hash;
-            log_to_file("Syncing user: $username");
-
-                # Update ProxySQL's mysql_users
-                eval {
-                    $proxysql_dbh->do(
-                        "REPLACE INTO mysql_users (username, password, default_hostgroup, active) VALUES (?, ?, ?, 1)",
-                        undef, $username, $password_hash, $proxysql_default_hostgroup
-                    );
-                };
-                if ($@) {
-                log_to_file("Failed to sync user $username to ProxySQL: $@");
-                    next;
-                }
-            }
-            $sth->finish();
-
+          
             # Apply ProxySQL changes
             eval {
                 $proxysql_dbh->do("LOAD MYSQL USERS TO RUNTIME");
                 $proxysql_dbh->do("SAVE MYSQL USERS TO DISK");
             };
+            
             if ($@) {
-            log_to_file("Failed to apply ProxySQL changes: $@");
+                log_to_file("Failed to apply ProxySQL changes: $@");
             }
-
+            
             $mysql_dbh->disconnect();
             $proxysql_dbh->disconnect();
-        log_to_file("MySQL to ProxySQL user synchronization completed");
+            log_to_file("MySQL to ProxySQL user synchronization completed");
+
         }
 
         1;
         EOF
-
         echo "Validating syntax..."
         /usr/local/cpanel/3rdparty/bin/perl -c /usr/local/cpanel/Cpanel/ProxyRestoreHook.pm || exit 1
 
@@ -878,6 +865,5 @@
         echo "Verifying..."
         /usr/local/cpanel/bin/manage_hooks list | grep -q ProxyRestoreHook && \
         echo "Success!" || echo "Installation failed!"
-
       args:
-        executable: /bin/bash 
+        executable: /bin/bash
