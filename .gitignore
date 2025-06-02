@@ -6,3 +6,6 @@ inventory.ini
 playbooks/ansy*
 playbooks/ansible.cfg
 playbooks/inventory.ini
+
+#custom files
+*.log

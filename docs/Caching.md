@@ -1,17 +1,20 @@
 ## Introduction
 In this guide we are going to setup caching rules for proxysql and test them
 
+# Test Database Creation
+```sh
+sudo mysql <<EOF
+-- Create a test database
+CREATE DATABASE IF NOT EXISTS wordpress_test;
+EOF
+```
+
 # Rule 001
 This rule takes the following pattern
 ```sql
 SELECT option_value FROM wpeudu_options WHERE option_name = ? LIMIT ?
 ```
-or 
-```sql
-SELECT option_value FROM zclk_options WHERE option_name = ? LIMIT ?
-```
-Let us add it to proxysql
-
+Add to proxysql
 ```sh
 mysql -u admin -padmin -h 127.0.0.1 -P6032 --prompt='Admin> ' <<EOF
 INSERT INTO mysql_query_rules (
@@ -32,12 +35,10 @@ SAVE MYSQL QUERY RULES TO DISK;
 EOF
 ```
 
-# Rule Testing 
-In mysql
+# Rule Testing  & Validation
+1. Mysql insert data
 ```sh
 sudo mysql <<EOF
--- Create a test database
-CREATE DATABASE IF NOT EXISTS wordpress_test;
 USE wordpress_test;
 -- Create tables matching WordPress-like schemas
 CREATE TABLE wp_options (
@@ -69,47 +70,8 @@ INSERT INTO wpzy_options (option_name, option_value) VALUES
 EOF
 ```
 
-# Test Queries
-Let us run these queries through ProxySQL 
-
-## Test 1: Matching Query
-```sql
-SELECT option_value FROM wpa7_options WHERE option_name = 'siteurl' LIMIT 1;
-```
-Expected Result: This query should match the rule and be cached (check stats_mysql_query_digest).
-
-## Test 2: Case-Insensitive Match
-```sql
-SELECT OPTION_VALUE FROM WPZY_OPTIONS WHERE OPTION_NAME = 'theme' LIMIT 1;
-```
-Expected Result: Should still match due to (?i) in the regex.
-
-## Test 3: Non-Matching Query
-```sql
-SELECT * FROM unrelated_table WHERE id = 1;
-```
-Expected Result: Should not match the rule or be cached.
-
-## Test 4: Edge Case (LIMIT with Two Parameters)
-```sql
-SELECT option_value FROM wp_options WHERE option_name = 'active_plugins' LIMIT 0,1;
-```
-Expected Result: Should match because the regex allows LIMIT ?,?.
-
-## Verify Results
-ProxySQL’s query digest to confirm caching:
-
-```sql
--- Check which queries were matched/cached
-SELECT digest, digest_text, cache_ttl, hits FROM stats_mysql_query_digest WHERE digest_text LIKE '%option_value%';
-```
-Look for:
-cache_ttl = 3600000 on matching queries.
-Increased hits for repeated identical queries.
-
-# Mysql Slap
-# Step 1: Prepare Test SQL File
-Create a file
+2. Mysql Slap
+Prepare Test SQL File 
 ```sh
 cat <<EOF > test_queries.sql
 -- Matching queries (should trigger caching)
@@ -124,8 +86,7 @@ SELECT * FROM unrelated_table WHERE id = 1;
 SELECT option_name FROM wpa7_options WHERE option_value LIKE '%test%';
 EOF
 ```
-
-## Step 2: Run mysqlslap Through ProxySQL
+3. Run mysqlslap Through ProxySQL
 Execute mysqlslap to simulate concurrent clients.
 ```sh
 mysqlslap \
@@ -139,7 +100,7 @@ mysqlslap \
   --create-schema=wordpress_test  
 ```
 
-## Step 3: Verify ProxySQL Stats
+4. Verify ProxySQL Stats
 After running mysqlslap,ProxySQL’s query digest to confirm caching behavior:
 
 -- Connect to ProxySQL admin interface
@@ -160,7 +121,6 @@ EOF
 Queries matching your regex (e.g., SELECT option_value FROM wpa7_options...) should show cache_ttl = 3600000 and high total_hits.
 Non-matching queries (e.g., SELECT * FROM unrelated_table...) should have cache_ttl = 0.
 
-# Step 4: Validate Caching
 All case variations (e.g., SELECT, select).
 WordPress options tables (e.g., wp_options, wpa7_options).
 Both LIMIT ? and LIMIT ?,?.
@@ -193,8 +153,8 @@ LOAD MYSQL QUERY RULES TO RUNTIME;
 SAVE MYSQL QUERY RULES TO DISK;
 EOF
 ```
-Mysql
-
+# Testing and Validation
+1. Create Mysql Tables
 ```sh 
 sudo mysql <<EOF
 USE wordpress_test;
@@ -208,7 +168,7 @@ CREATE TABLE IF NOT EXISTS wp0p_postmeta (
 EOF
 ```
 
-## 2.Insert sample Data
+2.Insert sample Data
 -- Insert sample data to mysql
 ```sh
 sudo mysql <<EOF
@@ -221,34 +181,8 @@ INSERT INTO wp0p_postmeta (meta_id, post_id, meta_key, meta_value) VALUES
 EOF
 ```
 
-# 3. Test Queries
-Run these queries through ProxySQL to validate the rule:
-
-1. Test 1: Matching Query
-```sql
-SELECT post_id, meta_key, meta_value FROM wp0p_postmeta WHERE post_id IN (101) ORDER BY meta_id ASC;
-```
-```
-Expected Result: Rule matches, query is cached.
-```
-
-2. Test 2: Case-Insensitive Match
-```sql
-SELECT POST_ID, META_KEY, META_VALUE FROM WP0P_POSTMETA WHERE POST_ID IN (102) ORDER BY META_ID ASC;
-```
-```
-Expected Result: Rule matches due to (?i).
-```
-
-3. Test 3: Non-Matching Query (Different Table)
-```sql
-SELECT post_id, meta_key, meta_value FROM other_postmeta WHERE post_id IN (103) ORDER BY meta_id ASC;
-```
-Expected Result: Rule does NOT match.
-
-## 4. Simulate Load with mysqlslap
-Create a test file postmeta_queries.sql:
-
+3. Test Queries
+Create a test file postmeta_queries.sql
 ```sh
 cat <<EOF > postmeta_queries.sql
 -- Matching queries
@@ -258,7 +192,9 @@ SELECT post_id, meta_key, meta_value FROM wp0p_postmeta WHERE post_id IN (102) O
 -- SELECT post_id, meta_key, meta_value FROM unrelated_postmeta WHERE post_id IN (103) ORDER BY meta_id ASC;
 EOF
 ```
-Run mysqlslap:
+
+4. Simulate Load with mysqlslap
+Run these queries through ProxySQL to validate the rule:
 ```bash
 mysqlslap \
   --user=stnduser \
@@ -270,7 +206,8 @@ mysqlslap \
   --query=postmeta_queries.sql \
   --create-schema=wordpress_test
 ```
-## 5. Verify ProxySQL Stats
+
+5. Verify ProxySQL Stats
 Check query digest and caching:
 ```sql
 -- Check matching queries
@@ -288,7 +225,7 @@ SELECT post_id, meta_key, meta_value FROM wp0p_postmeta...	3600000	1000	1000
 SELECT post_id, meta_key, meta_value FROM unrelated_post...	0	0	500
 ```
 
-## 6. Final Validation
+6. Final Validation
 Only the target query (wp0p_postmeta) is cached.
 The cache hit count (Query_Cache_count_GET_OK) increases.
 Non-matching queries are ignored by the rule.
@@ -299,10 +236,7 @@ This rule takes the following pattern
 ```sql
 SELECT t.*,tt.* FROM wprw_terms AS t INNER JOIN wprw_term_taxonomy AS tt ON t.term_id = tt.term_id WHERE t.term_id = ?
 ```
-Create the rule
-```sql
-'(?i)^SELECT\\s+t\\.\\*,tt\\.\\*\\s+FROM\\s+[a-zA-Z0-9]+_terms\\s+AS\\s+t\\s+INNER\\s+JOIN\\s+`?[a-zA-Z0-9]+_term_taxonomy`?\\s+AS\\s+tt\\s+ON\\s+t\\.term_id\\s+=\\s+tt\\.term_id\\s+WHERE\\s+t\\.term_id\\s+=\\s+\\?$
-```
+1. Create the rule 003
 ```sh
 mysql -u admin -padmin -h 127.0.0.1 -P6032 --prompt='Admin> ' <<EOF
 INSERT INTO mysql_query_rules (
@@ -322,7 +256,7 @@ LOAD MYSQL QUERY RULES TO RUNTIME;
 SAVE MYSQL QUERY RULES TO DISK;
 EOF
 ```
-This rule follows the following pattern 
+2. This rule follows the following pattern 
 ```sql
 SELECT t.*,tt.* FROM wprw_terms AS t INNER JOIN wprw_term_taxonomy AS tt ON t.term_id = tt.term_id WHERE t.term_id IN (?,?,?,...)
 ```
@@ -350,8 +284,8 @@ LOAD MYSQL QUERY RULES TO RUNTIME;
 SAVE MYSQL QUERY RULES TO DISK;
 EOF
 ```
-
-## Create Test Table & Insert Data
+## Testing and Validation
+4. Create Test Table & Insert Data
 Mysql
 ```sh
 sudo mysql <<EOF
@@ -362,7 +296,6 @@ CREATE TABLE wp_terms (
     slug VARCHAR(100),
     term_group INT
 );
-
 CREATE TABLE wp_term_taxonomy (
     term_taxonomy_id INT PRIMARY KEY,
     term_id INT,
@@ -377,7 +310,6 @@ INSERT INTO wp_terms (term_id, name, slug, term_group) VALUES
 (2, 'Science', 'science', 0),
 (3, 'Health', 'health', 0),
 (4, 'Education', 'education', 0);
-
 INSERT INTO wp_term_taxonomy (term_taxonomy_id, term_id, taxonomy, description, parent, count) VALUES
 (10, 1, 'category', 'Tech related content', 0, 5),
 (11, 2, 'category', 'Science related content', 0, 3),
@@ -386,28 +318,18 @@ INSERT INTO wp_term_taxonomy (term_taxonomy_id, term_id, taxonomy, description, 
 EOF
 ```
 
-## Prepare and Query Data
+4. Prepare and Query Data
 Create term_queries.sql:
-
 ```sh
 cat <<EOF > term_queries.sql
 -- Matching IN queries (rule 9)
-SELECT t.*,tt.* FROM wp_terms AS t 
-INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id 
-WHERE t.term_id IN (1);
-
-SELECT t.*,tt.* FROM wp_terms AS t 
-INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id 
-WHERE t.term_id IN (2,3);
-
+SELECT t.*,tt.* FROM wp_terms AS t INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id WHERE t.term_id IN (1);
+SELECT t.*,tt.* FROM wp_terms AS t INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id WHERE t.term_id IN (2,3);
 -- Matching = query (rule 8)
-SELECT t.*,tt.* FROM wp_terms AS t 
-INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id 
-WHERE t.term_id = 4;
+SELECT t.*,tt.* FROM wp_terms AS t INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id WHERE t.term_id = 4;
 EOF
 ```
-Simulate load with mysql slap
-
+5. Simulate load with mysql slap
 ```sh
 mysqlslap \
   --user=stnduser \
@@ -419,7 +341,7 @@ mysqlslap \
   --query=term_queries.sql \
   --create-schema=wordpress_test
 ```
-## Verification 
+6. Verification 
 Run this to confirm match/caching behavior:
 
 ```sql

@@ -1,7 +1,6 @@
 #!/bin/bash
 set -e
-
-echo "Adding cPanel ProxySQL Restore Sync hook..."
+echo "Adding cPanel PhpMyAdminSessionHook hook..."
 [ "$(id -u)" -ne 0 ] && { echo "Run as root: sudo $0"; exit 1; }
 
 echo "Checking Perl modules..."
@@ -18,11 +17,11 @@ mkdir -p /usr/local/cpanel/Cpanel || exit 1
 echo "Enabling hooks..."
 echo "enabled" > /var/cpanel/hooks/state
 
-echo "Writing ProxySQL hook module..."
-cat <<'EOF' > /usr/local/cpanel/Cpanel/ProxyRestoreHook.pm
+echo "Writing PhpMyAdminSessionHook hook module..."
+cat <<'EOF' > /usr/local/cpanel/Cpanel/PhpMyAdminSessionHook.pm
 #!/usr/bin/perl
 
-package Cpanel::ProxyRestoreHook;
+package Cpanel::PhpMyAdminSessionHook;
 
 use strict;
 use warnings;
@@ -30,7 +29,6 @@ use Cpanel::Logger;
 use DBI;
 use File::Path qw(make_path);
 use POSIX qw(strftime);
-
 
 # ProxySQL Configuration
 my $proxysql_admin_host = '127.0.0.1';
@@ -48,7 +46,7 @@ my $mysql_pass = 'stnduser';
 
 # Logging configuration
 my $log_dir = '/var/log/cpanel/hooks';
-my $log_file = "$log_dir/proxy_restore.log";
+my $log_file = "$log_dir/phpmyadmin_session.log";
 
 # Ensure log directory exists
 make_path($log_dir) unless -d $log_dir;
@@ -57,18 +55,11 @@ my $logger = Cpanel::Logger->new();
 
 sub describe {
     return [
-       {
-            'category' => 'PkgAcct',
-            'event'    => 'Restore',
-            'stage'    => 'postExtract',
-            'hook'     => 'Cpanel::ProxyRestoreHook::pre_restore',
-            'exectype' => 'module',
-        },
         {
-            'category' => 'PkgAcct',
-            'event'    => 'Restore',
+            'category' => 'Cpanel',
+            'event'    => 'UAPI::Session::create_temp_user',
             'stage'    => 'post',
-            'hook'     => 'Cpanel::ProxyRestoreHook::post_restore',
+            'hook'     => 'Cpanel::PhpMyAdminSessionHook::handle_session_creation',
             'exectype' => 'module',
         }
     ];
@@ -84,87 +75,25 @@ sub log_to_file {
     }
 }
 
-sub switch_to_mysql {
-    log_to_file("Switching to direct MySQL connection");
-
-    # Fix socket permissions
-    if (-e "/var/lib/mysql/mysql.sock") {
-        system("sudo chown mysql:mysql /var/lib/mysql/mysql.sock") == 0
-            or log_to_file("Failed to chown mysql.sock: $?");
-        system("sudo chmod 777 /var/lib/mysql/mysql.sock") == 0
-            or log_to_file("Failed to chmod mysql.sock: $?");
-    } else {
-        log_to_file("MySQL socket /var/lib/mysql/mysql.sock does not exist");
-    }
-
-    # Create symlink to MySQL socket
-    if (-e "/var/lib/mysql/mysql2.sock") {
-        system("sudo ln -sf /var/lib/mysql/mysql2.sock /var/lib/mysql/mysql.sock") == 0
-            or log_to_file("Failed to create symlink for mysql.sock: $?");
-    } else {
-        log_to_file("MySQL socket /var/lib/mysql/mysql2.sock does not exist");
-    }
-
-    # Redirect traffic from port 3306 to 3307
-    system("sudo iptables -t nat -A PREROUTING -p tcp --dport 3306 -j REDIRECT --to-ports 3307") == 0
-        or log_to_file("Failed to redirect PREROUTING 3306 to 3307: $?");
-    system("sudo iptables -t nat -A OUTPUT -p tcp --dport 3306 -j REDIRECT --to-ports 3307") == 0
-        or log_to_file("Failed to redirect OUTPUT 3306 to 3307: $?");
-}
-
-sub revert_to_proxysql {
-   log_to_file("Reverting to ProxySQL operation");
-
-    # Restore socket ownership to Proxysql
-    if (-e "/var/lib/mysql/mysql.sock") {
-        system("sudo chown proxysql:proxysql /var/lib/mysql/mysql.sock") == 0
-            or log_to_file("Failed to chown mysql.sock to proxysql: $?");
-    }
-
-    # Remove symlink
-    if (-l "/var/lib/mysql/mysql.sock") {
-        system("sudo unlink /var/lib/mysql/mysql.sock") == 0
-            or log_to_file("Failed to unlink mysql.sock: $?");
-    }
-
-   # Restore socket ownership
-    if (-e "/var/lib/mysql/mysql2.sock") {
-        system("sudo chown mysql:mysql /var/lib/mysql/mysql2.sock") == 0
-            or log_to_file("Failed to chown mysql2.sock to mysql: $?");
-        system("sudo chmod 777 /var/lib/mysql/mysql2.sock") == 0
-            or log_to_file("Failed to update permissions for mysql2.sock to 777 $?");
-    }
-
-    # Restart ProxySQL
-    system("sudo systemctl restart proxysql") == 0
-        or log_to_file("Failed to restart ProxySQL: $?");
+sub handle_session_creation {
+    my ($context, $data) = @_;
     
-    # Remove port redirections
-    system("sudo iptables -t nat -D PREROUTING -p tcp --dport 3306 -j REDIRECT --to-ports 3307") == 0
-        or log_to_file("Failed to remove PREROUTING redirection: $?");
-    system("sudo iptables -t nat -D OUTPUT -p tcp --dport 3306 -j REDIRECT --to-ports 3307") == 0
-        or log_to_file("Failed to remove OUTPUT redirection: $?");
-
+    # Extract user information from the context/data
+    my $user = $data->{'user'} || $context->{'user'} || 'unknown';
+    my $session_id = $data->{'session_id'} || $context->{'session_id'} || 'unknown';
+    
+    log_to_file("phpMyAdmin session created for user: $user (Session ID: $session_id)");
+    
+    # Sync the specific user or all users to ProxySQL
+    _sync_user_to_proxysql($user);
+    
+    log_to_file("Session handling complete for user: $user");
 }
 
-sub pre_restore {
-    my ($context, $data) = @_;
-   log_to_file("Starting pre-restore actions for restorepkg");
-    switch_to_mysql();
-   log_to_file("Switch to MySQL complete");
-}
-
-sub post_restore {
-    my ($context, $data) = @_;
-   log_to_file("Starting post-restore actions for restorepkg");
-    _sync_all_mysql_users();
-   log_to_file("ProxySQL user sync complete");
-    revert_to_proxysql();
-   log_to_file("ProxySQL operation restored");
-}
-
-sub _sync_all_mysql_users {
-    log_to_file("Starting MySQL to ProxySQL user synchronization (localhost only)");
+sub _sync_user_to_proxysql {
+    my ($target_user) = @_;
+    
+    log_to_file("Starting user synchronization for: $target_user");
 
     # Connect to MySQL
     my $mysql_dsn = "DBI:mysql:database=mysql;host=$mysql_host;port=$mysql_port";
@@ -174,7 +103,7 @@ sub _sync_all_mysql_users {
         PrintError => 0
     }) or do {
         log_to_file("Cannot connect to MySQL: $DBI::errstr");
-        return;
+        return 0;
     };
     
     # Connect to ProxySQL
@@ -186,27 +115,31 @@ sub _sync_all_mysql_users {
     }) or do {
         log_to_file("Cannot connect to ProxySQL: $DBI::errstr");
         $mysql_dbh->disconnect() if $mysql_dbh;
-        return;
+        return 0;
     };
     
+    # Query for the specific user or related users
     my $user_query = q{
         SELECT User, authentication_string 
         FROM mysql.user 
         WHERE Host = 'localhost'
           AND authentication_string != ''
           AND authentication_string IS NOT NULL
+          AND (User = ? OR User LIKE ?)
     };
     
     my $sth = $mysql_dbh->prepare($user_query);
-    unless ($sth && $sth->execute()) {
+    my $user_pattern = "${target_user}%"; # Also sync temp users for this account
+    
+    unless ($sth && $sth->execute($target_user, $user_pattern)) {
         my $error = $mysql_dbh->errstr || "Unknown error";
-        log_to_file("Failed to query MySQL users: $error");
+        log_to_file("Failed to query MySQL users for $target_user: $error");
         $mysql_dbh->disconnect();
         $proxysql_dbh->disconnect();
-        return;
+        return 0;
     }
 
-    # Prepare statement once for efficiency
+    # Prepare ProxySQL insert/update statement
     my $user_stmt = $proxysql_dbh->prepare(
         q{INSERT INTO mysql_users 
           (username, password, default_hostgroup, active) 
@@ -220,7 +153,7 @@ sub _sync_all_mysql_users {
         $sth->finish();
         $mysql_dbh->disconnect();
         $proxysql_dbh->disconnect();
-        return;
+        return 0;
     };
 
     my ($synced_count, $error_count) = (0, 0);
@@ -231,6 +164,7 @@ sub _sync_all_mysql_users {
         eval {
             $user_stmt->execute($username, $password_hash, $proxysql_default_hostgroup);
             $synced_count++;
+            log_to_file("Synced user: $username");
         };
         if ($@) {
             log_to_file("Failed to sync user $username: $@");
@@ -239,7 +173,7 @@ sub _sync_all_mysql_users {
     }
     $sth->finish();
     
-    log_to_file("Synced $synced_count localhost users ($error_count errors)");
+    log_to_file("Synced $synced_count users for $target_user ($error_count errors)");
     
     # Apply ProxySQL changes
     my ($runtime_ok, $disk_ok) = (1, 1);
@@ -266,23 +200,24 @@ sub _sync_all_mysql_users {
     $proxysql_dbh->disconnect();
     
     if ($runtime_ok && $disk_ok) {
-        log_to_file("User synchronization completed successfully");
+        log_to_file("User synchronization completed successfully for $target_user");
         return 1;
     }
     
-    log_to_file("User synchronization completed with errors");
+    log_to_file("User synchronization completed with errors for $target_user");
     return 0;
 }
+
 
 1;
 EOF
 
 echo "Validating syntax..."
-/usr/local/cpanel/3rdparty/bin/perl -c /usr/local/cpanel/Cpanel/ProxyRestoreHook.pm || exit 1
+/usr/local/cpanel/3rdparty/bin/perl -c /usr/local/cpanel/Cpanel/PhpMyAdminSessionHook.pm || exit 1
 
 echo "Registering hook..."
-/usr/local/cpanel/bin/manage_hooks add module Cpanel::ProxyRestoreHook
+/usr/local/cpanel/bin/manage_hooks add module Cpanel::PhpMyAdminSessionHook
 
 echo "Verifying..."
-/usr/local/cpanel/bin/manage_hooks list | grep -q ProxyRestoreHook && \
+/usr/local/cpanel/bin/manage_hooks list | grep -q PhpMyAdminSessionHook && \
 echo "Success!" || echo "Installation failed!"

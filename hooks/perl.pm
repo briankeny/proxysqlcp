@@ -270,7 +270,7 @@ sub load_mysql_users_table {
   $dbh->do("LOAD MYSQL USERS TO RUNTIME");
   $dbh->do("SAVE MYSQL USERS TO DISK");
 
-  # $dbh->disconnect();
+  $dbh->disconnect();
 }
 
 1;

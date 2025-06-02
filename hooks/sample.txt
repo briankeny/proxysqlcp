@@ -1,0 +1,124 @@
+sub _sync_all_mysql_users {
+    log_to_file("Starting MySQL to ProxySQL user synchronization");
+
+    # Connect to MySQL
+    my $mysql_dsn = "DBI:mysql:database=mysql;host=$mysql_host;port=$mysql_port";
+    my $mysql_dbh = DBI->connect($mysql_dsn, $mysql_user, $mysql_pass, {
+        RaiseError => 0,
+        AutoCommit => 1,
+        PrintError => 0,
+        mysql_enable_utf8 => 1  # Handle special characters in usernames
+    }) or do {
+        log_to_file("Cannot connect to MySQL: $DBI::errstr");
+        return;
+    };
+    
+    # Connect to ProxySQL
+    my $proxysql_dsn = "DBI:mysql:database=$proxysql_admin_db;host=$proxysql_admin_host;port=$proxysql_admin_port";
+    my $proxysql_dbh = DBI->connect($proxysql_dsn, $proxysql_admin_user, $proxysql_admin_pass, {
+        RaiseError => 0,
+        AutoCommit => 1,
+        PrintError => 0,
+        mysql_enable_utf8 => 1  # Handle special characters
+    }) or do {
+        log_to_file("Cannot connect to ProxySQL: $DBI::errstr");
+        $mysql_dbh->disconnect() if $mysql_dbh;
+        return;
+    };
+    
+    # Get MySQL users - optimized query with host priority
+    my $user_query = q{
+        SELECT 
+            User, 
+            authentication_string,
+            Host  -- Added host for debugging
+        FROM mysql.user 
+        WHERE 
+            Host IN ('localhost', '%', '127.0.0.1', '::1') AND
+            authentication_string != '' AND
+            authentication_string IS NOT NULL AND
+            plugin IN ('', 'mysql_native_password', 'caching_sha2_password')
+        ORDER BY
+            FIELD(Host, 'localhost', '127.0.0.1', '::1', '%')  # Priority order
+    };
+    
+    my $sth = $mysql_dbh->prepare($user_query);
+    unless ($sth && $sth->execute()) {
+        my $error = $mysql_dbh->errstr || "Unknown error";
+        log_to_file("Failed to query MySQL users: $error");
+        $mysql_dbh->disconnect();
+        $proxysql_dbh->disconnect();
+        return;
+    }
+
+    my ($synced_count, $error_count) = (0, 0);
+    my %processed_users;  # Track users to handle duplicates
+    
+    # Prepare statement for efficiency
+    my $user_stmt = $proxysql_dbh->prepare(
+        q{INSERT INTO mysql_users 
+          (username, password, default_hostgroup, active) 
+          VALUES (?, ?, ?, 1)
+          ON DUPLICATE KEY UPDATE 
+            password=VALUES(password),
+            default_hostgroup=VALUES(default_hostgroup),
+            active=1}
+    );
+    
+    while (my ($username, $password_hash, $host) = $sth->fetchrow_array()) {
+        next unless $username && $password_hash;
+        
+        # Handle duplicate users - prioritize specific hosts
+        if ($processed_users{$username}) {
+            log_to_file("Skipping duplicate user $username\@$host (already processed from $processed_users{$username})");
+            next;
+        }
+        $processed_users{$username} = $host;
+        
+        eval {
+            $user_stmt->execute($username, $password_hash, $proxysql_default_hostgroup);
+            $synced_count++;
+            log_to_file("Synced user $username\@$host to ProxySQL", 2);  # Level 2 = debug
+        };
+        if ($@) {
+            log_to_file("Failed to sync user $username: $@");
+            $error_count++;
+        }
+    }
+    $sth->finish();
+    
+    log_to_file("User sync: $synced_count users processed, $error_count errors");
+    
+    # Apply ProxySQL changes with separate error handling
+    my ($runtime_ok, $disk_ok) = (1, 1);
+    
+    eval {
+        $proxysql_dbh->do("LOAD MYSQL USERS TO RUNTIME");
+        log_to_file("Loaded users to runtime");
+    };
+    if ($@) {
+        log_to_file("LOAD MYSQL USERS TO RUNTIME failed: $@");
+        $runtime_ok = 0;
+    }
+    
+    eval {
+        $proxysql_dbh->do("SAVE MYSQL USERS TO DISK");
+        log_to_file("Saved users to disk");
+    };
+    if ($@) {
+        log_to_file("SAVE MYSQL USERS TO DISK failed: $@");
+        $disk_ok = 0;
+    }
+    
+    # Cleanup resources
+    $user_stmt->finish() if $user_stmt;
+    $mysql_dbh->disconnect();
+    $proxysql_dbh->disconnect();
+    
+    my $status = $runtime_ok && $disk_ok ? "success" : 
+                 $runtime_ok ? "runtime-only success" :
+                 $disk_ok ? "disk-only success" : "complete failure";
+                 
+    log_to_file("User synchronization completed: $status");
+    return $runtime_ok && $disk_ok;
+}

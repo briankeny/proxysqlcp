@@ -142,7 +142,7 @@ sub post_restore {
 }
 
 sub _sync_all_mysql_users {
-    log_to_file("Starting MySQL to ProxySQL user synchronization");
+    log_to_file("Starting MySQL to ProxySQL user synchronization (localhost only)");
 
     # Connect to MySQL
     my $mysql_dsn = "DBI:mysql:database=mysql;host=$mysql_host;port=$mysql_port";
@@ -163,49 +163,93 @@ sub _sync_all_mysql_users {
         PrintError => 0
     }) or do {
         log_to_file("Cannot connect to ProxySQL: $DBI::errstr");
+        $mysql_dbh->disconnect() if $mysql_dbh;
         return;
     };
     
-    # Get MySQL users with hashed passwords
-    my $sth = $mysql_dbh->prepare("SELECT User, authentication_string FROM mysql.user WHERE Host = 'localhost' AND authentication_string != ''");
+    my $user_query = q{
+        SELECT User, authentication_string 
+        FROM mysql.user 
+        WHERE Host = 'localhost'
+          AND authentication_string != ''
+          AND authentication_string IS NOT NULL
+    };
+    
+    my $sth = $mysql_dbh->prepare($user_query);
     unless ($sth && $sth->execute()) {
-        log_to_file("Failed to query MySQL users: " . ($mysql_dbh->errstr || "Unknown error"));
+        my $error = $mysql_dbh->errstr || "Unknown error";
+        log_to_file("Failed to query MySQL users: $error");
         $mysql_dbh->disconnect();
         $proxysql_dbh->disconnect();
         return;
     }
 
-    while (my ($username, $password_hash) = $sth->fetchrow_array) {
+    # Prepare statement once for efficiency
+    my $user_stmt = $proxysql_dbh->prepare(
+        q{INSERT INTO mysql_users 
+          (username, password, default_hostgroup, active) 
+          VALUES (?, ?, ?, 1)
+          ON DUPLICATE KEY UPDATE 
+            password = VALUES(password),
+            default_hostgroup = VALUES(default_hostgroup),
+            active = 1}
+    ) or do {
+        log_to_file("Failed to prepare ProxySQL statement: " . $proxysql_dbh->errstr);
+        $sth->finish();
+        $mysql_dbh->disconnect();
+        $proxysql_dbh->disconnect();
+        return;
+    };
+
+    my ($synced_count, $error_count) = (0, 0);
+    
+    while (my ($username, $password_hash) = $sth->fetchrow_array()) {
         next unless $username && $password_hash;
-        log_to_file("Syncing user: $username");
         
-        # Update ProxySQL's mysql_users
         eval {
-            $proxysql_dbh->do(
-                "REPLACE INTO mysql_users (username, password, default_hostgroup, active) VALUES (?, ?, ?, 1)",
-                undef, $username, $password_hash, $proxysql_default_hostgroup
-            );
+            $user_stmt->execute($username, $password_hash, $proxysql_default_hostgroup);
+            $synced_count++;
         };
         if ($@) {
-            log_to_file("Failed to sync user $username to ProxySQL: $@");
-            next;
+            log_to_file("Failed to sync user $username: $@");
+            $error_count++;
         }
     }
     $sth->finish();
     
+    log_to_file("Synced $synced_count localhost users ($error_count errors)");
+    
     # Apply ProxySQL changes
+    my ($runtime_ok, $disk_ok) = (1, 1);
+    
     eval {
         $proxysql_dbh->do("LOAD MYSQL USERS TO RUNTIME");
-        $proxysql_dbh->do("SAVE MYSQL USERS TO DISK");
+        log_to_file("Loaded users to runtime");
+    } or do {
+        log_to_file("LOAD MYSQL USERS TO RUNTIME failed: $@");
+        $runtime_ok = 0;
     };
-
-    if ($@) {
-        log_to_file("Failed to apply ProxySQL changes: $@");
-    }
     
+    eval {
+        $proxysql_dbh->do("SAVE MYSQL USERS TO DISK");
+        log_to_file("Saved users to disk");
+    } or do {
+        log_to_file("SAVE MYSQL USERS TO DISK failed: $@");
+        $disk_ok = 0;
+    };
+    
+    # Cleanup resources
+    $user_stmt->finish() if $user_stmt;
     $mysql_dbh->disconnect();
     $proxysql_dbh->disconnect();
-    log_to_file("MySQL to ProxySQL user synchronization completed");
+    
+    if ($runtime_ok && $disk_ok) {
+        log_to_file("User synchronization completed successfully");
+        return 1;
+    }
+    
+    log_to_file("User synchronization completed with errors");
+    return 0;
 }
 
 1;
