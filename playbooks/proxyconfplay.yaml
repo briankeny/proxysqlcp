@@ -413,111 +413,137 @@
       args:
         executable: /bin/bash
 
-    - name: Sync Users To Proxysql
-      raw: |
-        set -e
-        echo "User Sync started..."
-        # Check if the script is run as root
-        if [ "$(id -u)" -ne 0 ]; then
-            echo "This script must be run as root. Please run it with sudo."
-            exit 1
-        fi
-        echo "Starting full user synchronization"          
-        echo "Configuring Root"
-        # Extract user 
-        MYSQL_USER=$(sudo sed -n 's/^[[:space:]]*user[[:space:]]*=[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' /root/.my.cnf)
-        MYSQL_PASSWORD=$(sudo sed -n 's/^[[:space:]]*password[[:space:]]*=[[:space:]]*"\([^"]*\)"[[:space:]]*$/\1/p' /root/.my.cnf)
-        set +e
-        # Add root to proxysql
-        mysql -u admin -padmin -h 127.0.0.1 -P6032 --prompt='Admin> ' <<EOF >/dev/null 2>&1
-        INSERT INTO mysql_users(username,password,default_hostgroup) VALUES ('$MYSQL_USER','$MYSQL_PASSWORD',1);
-        SAVE MYSQL USERS TO DISK;
-        LOAD MYSQL USERS TO RUNTIME;
-        EOF
-        echo "Root is now on cpanel"       
-        # Get all MySQL users with their default schema
-        USERS_QUERY="SELECT u.user, u.host, u.authentication_string, 
-                    IF(u.plugin='mysql_native_password',1,0) as active,
-                    MAX(IF(d.Select_priv = 'Y', 1, 0)) as use_ssl,
-                    MIN(d.Db) as default_schema
-                    FROM mysql.user u
-                    LEFT JOIN mysql.db d ON u.user = d.user AND u.host = d.host
-                    WHERE u.user != '' AND u.user NOT IN ('root', 'mysql.sys', 'mysql.session')
-                    GROUP BY u.user, u.host;"
-        # Temporary file to store user data
-        USERS_FILE=$(mktemp)
-        echo "Retrieving users from MySQL..."
-        # Get users from MySQL and save to temp file
-        sudo mysql -ANe "$USERS_QUERY" > "$USERS_FILE"
-        if [ $? -ne 0 ]; then
-            echo "Error: Failed to retrieve users from MySQL"
-            rm -f "$USERS_FILE"
-            exit 1
-        fi
-        echo "Users retrieved from MySQL and saved to $USERS_FILE"
-        echo "Saving mysql users to proxysql..."
-        # Add users from temp file to ProxySQL
-        while IFS=$'\t' read -r user host password active use_ssl default_schema; do
-            # Default to hostgroup 1
-            default_hostgroup=1
-            host=${host:-"%"}
-            user=${user:-"stnduser"}
-            password=${password:-""}
-            active=${active:-1}
-            use_ssl=0
-            ssl_en=${use_ssl:-0}
-            default_schema=${default_schema:-"NULL"} # Use NULL if no schema is found
-            if [[ "$default_schema" != "NULL" ]]; then
-                default_schema=${default_schema//\\}
-            fi
-            # Insert user into ProxySQL
-            INSERT_QUERY="INSERT INTO mysql_users (username, password, active, default_hostgroup, default_schema, schema_locked, transaction_persistent, fast_forward, backend, frontend, max_connections, use_ssl) VALUES ('$user', '$password', $active, $default_hostgroup, '$default_schema', 0, 0, 0, 1, 1, 1000, $use_ssl)"
-            # Execute the insert query
-            mysql -u admin -padmin -h 127.0.0.1 -P6032 --prompt='Admin> ' -e "$INSERT_QUERY" 2>/dev/null || true
+    # - name: Sync Users To Proxysql
+    #   raw: |
+    #     set -e
+    #     echo "User Sync started..."
+    #     # Check if the script is run as root
+    #     if [ "$(id -u)" -ne 0 ]; then
+    #         echo "This script must be run as root. Please run it with sudo."
+    #         exit 1
+    #     fi
+    #     echo "Starting full user synchronization"          
+    #     echo "Configuring Root"
+    #     # Extract user 
+    #     MYSQL_USER=$(sudo sed -n 's/^[[:space:]]*user[[:space:]]*=[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' /root/.my.cnf)
+    #     MYSQL_PASSWORD=$(sudo sed -n 's/^[[:space:]]*password[[:space:]]*=[[:space:]]*"\([^"]*\)"[[:space:]]*$/\1/p' /root/.my.cnf)
+    #     set +e
+    #     # Add root to proxysql
+    #     mysql -u admin -padmin -h 127.0.0.1 -P6032 --prompt='Admin> ' <<EOF >/dev/null 2>&1
+    #     INSERT INTO mysql_users(username,password,default_hostgroup) VALUES ('$MYSQL_USER','$MYSQL_PASSWORD',1);
+    #     SAVE MYSQL USERS TO DISK;
+    #     LOAD MYSQL USERS TO RUNTIME;
+    #     EOF
+    #     echo "Root is now on cpanel"       
+    #     # Get all MySQL users with their default schema
+    #     USERS_QUERY="SELECT u.user, u.host, u.authentication_string, 
+    #                 IF(u.plugin='mysql_native_password',1,0) as active,
+    #                 MAX(IF(d.Select_priv = 'Y', 1, 0)) as use_ssl,
+    #                 MIN(d.Db) as default_schema
+    #                 FROM mysql.user u
+    #                 LEFT JOIN mysql.db d ON u.user = d.user AND u.host = d.host
+    #                 WHERE u.user != '' AND u.user NOT IN ('root', 'mysql.sys', 'mysql.session')
+    #                 GROUP BY u.user, u.host;"
+    #     # Temporary file to store user data
+    #     USERS_FILE=$(mktemp)
+    #     echo "Retrieving users from MySQL..."
+    #     # Get users from MySQL and save to temp file
+    #     sudo mysql -ANe "$USERS_QUERY" > "$USERS_FILE"
+    #     if [ $? -ne 0 ]; then
+    #         echo "Error: Failed to retrieve users from MySQL"
+    #         rm -f "$USERS_FILE"
+    #         exit 1
+    #     fi
+    #     echo "Users retrieved from MySQL and saved to $USERS_FILE"
+    #     echo "Saving mysql users to proxysql..."
+    #     # Add users from temp file to ProxySQL
+    #     while IFS=$'\t' read -r user host password active use_ssl default_schema; do
+    #         # Default to hostgroup 1
+    #         default_hostgroup=1
+    #         host=${host:-"%"}
+    #         user=${user:-"stnduser"}
+    #         password=${password:-""}
+    #         active=${active:-1}
+    #         use_ssl=0
+    #         ssl_en=${use_ssl:-0}
+    #         default_schema=${default_schema:-"NULL"} # Use NULL if no schema is found
+    #         if [[ "$default_schema" != "NULL" ]]; then
+    #             default_schema=${default_schema//\\}
+    #         fi
+    #         # Insert user into ProxySQL
+    #         INSERT_QUERY="INSERT INTO mysql_users (username, password, active, default_hostgroup, default_schema, schema_locked, transaction_persistent, fast_forward, backend, frontend, max_connections, use_ssl) VALUES ('$user', '$password', $active, $default_hostgroup, '$default_schema', 0, 0, 0, 1, 1, 1000, $use_ssl)"
+    #         # Execute the insert query
+    #         mysql -u admin -padmin -h 127.0.0.1 -P6032 --prompt='Admin> ' -e "$INSERT_QUERY" 2>/dev/null || true
 
-            # Successfully continue the loop regardless of command success/failure
-            echo "Processed user $user@$host in ProxySQL"
-        done < "$USERS_FILE"
-        echo "Saving mysql users to disk and runtime..."
-        # Apply changes to runtime and save to disk
-        mysql -u admin -padmin -h 127.0.0.1 -P6032 --prompt='Admin> ' <<EOF 
-        LOAD MYSQL USERS TO RUNTIME;
-        SAVE MYSQL USERS TO DISK;
-        EOF
-        # Clean up
-        rm -f "$USERS_FILE"
-        echo "Full user synchronization completed"
-      args:
-        executable: /bin/bash
+    #         # Successfully continue the loop regardless of command success/failure
+    #         echo "Processed user $user@$host in ProxySQL"
+    #     done < "$USERS_FILE"
+    #     echo "Saving mysql users to disk and runtime..."
+    #     # Apply changes to runtime and save to disk
+    #     mysql -u admin -padmin -h 127.0.0.1 -P6032 --prompt='Admin> ' <<EOF 
+    #     LOAD MYSQL USERS TO RUNTIME;
+    #     SAVE MYSQL USERS TO DISK;
+    #     EOF
+    #     # Clean up
+    #     rm -f "$USERS_FILE"
+    #     echo "Full user synchronization completed"
+    #   args:
+    #     executable: /bin/bash
 
     - name: Load Caching Rules to Proxysql
       raw: |
         set -e
         echo "Loading Caching Rules to ProxySQL..."
         mysql -u admin -padmin -h 127.0.0.1 -P6032 --prompt='Admin> ' <<EOF
+        -- Connection handling
+        -- Reduce ssl overhead
         SET mysql-have_ssl = 0;
-        SET mysql-connect_timeout_server = 10000; 
-        -- multiplexing
+        -- multiplexing true
         SET mysql-multiplexing = 1;
-        -- Optimize connection
-        SET mysql-max_transaction_time = 50000;
-        -- Cache ttl
-        SET mysql-query_cache_ttl=60000;
-        -- Default Cache Size 128 MB
-        SET mysql-query_cache_size_MB = 500;
+        -- Total of 2048 connections
+        SET mysql-max_connections = 2048;
+        -- 1hr max before shunning idle sessions
+        SET mysql-session_idle_ms = 3600000;
+        -- Idle connections connections ttl to 15 minutes
+        SET mysql-wait_timeout = 900000;
+        -- Optimize connection max age to 60 minutes
+        SET mysql-connection_max_age_ms = 3600000;
+        -- Lower timeout for faster I/O polling: 1s
+        SET mysql-poll_timeout = 1000;
+        -- Disconnect early when server is unreachable:- 5s
+        SET mysql-connect_timeout_server = 5000;
+        -- 10s proxysql is unreachable
+        SET mysql-connect_timeout_client=10000;
+        --  No long running sess past 30 min
+        SET mysql-max_transaction_time = 1800000;
+        -- Thread tuning
+        -- Adjust worker threads to 12. 12 cores equals 24 threads
+        SET mysql-threads = 12;
+        -- Query digests and caching
+        -- Default Cache TTl to 10 seconds
+        SET mysql-query_cache_ttl = 10000;
+        -- Max cache to 1G
+        SET mysql-query_cache_size_MB = 1048;
+        -- SET mysql-query_cache_stickiness = 0;
+        -- SET mysql-query_digests_max = 10000;
+        -- SET mysql-query_digests_enable = true;
+        -- SET mysql-query_digests_sample_rate = 100;
+        -- SET mysql-query_digests_lifetime_ms = 60000;
         -- Enable storing empty results
         SET mysql-query_cache_stores_empty_result=1;
-        -- Adjust max connections
-        SET mysql-max_connections = 2048;
-        -- mysql-poll_timeout: Default: 1000 µs, Lower timeout for faster I/O polling: Helps in high-load scenarios 
-        SET mysql-poll_timeout = 2000; -- Microseconds
-        -- Adjusted based on CPU cores
-        SET mysql-threads= 8;
-        -- Configure connection free timeout to free up idle connections
-        SET mysql-free_connections_pct = 90;
-        -- Apply and save
-        SAVE MYSQL VARIABLES TO DISK;
+        -- Load throttling
+        -- SET mysql-throttle_connections_per_sec_to_hostgroup = 1000;
+        -- Failover and monitoring
+        -- Adjust max latency to avoid laggy replicas
+        SET mysql-default_max_latency_ms = 1000;
+        -- Disable monitoring overhead
+        SET mysql-monitor_enabled = 0;
+        -- If monitoring is enabled, set the interval to 4s
+        SET mysql-monitor_connect_interval = 4000;
+        SET mysql-ping_interval_server_msec = 2000;
+        -- Save changes
         LOAD MYSQL VARIABLES TO RUNTIME;
+        SAVE MYSQL VARIABLES TO DISK;
         EOF
         echo "Caching rules loading complete..."
       args:
@@ -612,7 +638,7 @@
         UPDATE mysql_servers SET max_connections=2000 WHERE hostgroup_id=2;
         UPDATE global_variables SET variable_value='monitor' WHERE variable_name='mysql-monitor_username';
         UPDATE global_variables SET variable_value='monitor' WHERE variable_name='mysql-monitor_password';
-        UPDATE global_variables SET variable_value='2000' WHERE variable_name IN ('mysql-monitor_connect_interval','mysql-monitor_ping_interval','mysql-monitor_read_only_interval');
+        UPDATE global_variables SET variable_value='4000' WHERE variable_name IN ('mysql-monitor_connect_interval','mysql-monitor_ping_interval','mysql-monitor_read_only_interval');
         -- Disable Monitoring
         UPDATE global_variables SET variable_value='false' WHERE variable_name='mysql-monitor_enabled';
         INSERT INTO mysql_replication_hostgroups (writer_hostgroup,reader_hostgroup,comment) VALUES (1,2,'cluster1');

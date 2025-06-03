@@ -1,0 +1,159 @@
+- name: Add Query Rules To ProxySQL
+  hosts: sharedHosting
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Load Rules To Proxysql
+      raw: |
+        mysql -u admin -padmin -h 127.0.0.1 -P6032 --prompt='Admin> ' <<EOF
+        -- Delete Existing Rules
+        DELETE FROM mysql_query_rules;
+        -- Rule 1: Direct all write operations to hostgroup 1 
+        INSERT INTO mysql_query_rules (rule_id, active, match_pattern, re_modifiers, destination_hostgroup, apply)
+        VALUES (1, 1, '^(INSERT|UPDATE|DELETE|REPLACE|BEGIN|COMMIT|ROLLBACK)', 'CASELESS', 1, 1);
+
+        -- SELECT option_value FROM wptg_options WHERE option_name = ?
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (2,1,
+            '(?i)^SELECT\s+option_value\s+FROM\s+\w+_options\s+WHERE\s+option_name\s*=\s*\?\s+LIMIT\s+\?$',
+            120000, 1, 2);
+
+        -- SELECT t.*,tt.* FROM wps9_terms AS t INNER JOIN wps9_term_taxonomy AS tt ON t.term_id = tt.term_id WHERE t.term_id = ? 
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (3,1,
+            '(?i)^SELECT\s+t\.\*,\s*tt\.\*\s+FROM\s+\w+_terms\s+AS\s+t\s+INNER\s+JOIN\s+\w+_term_taxonomy\s+AS\s+tt\s+ON\s+t\.term_id\s+=\s+tt\.term_id\s+WHERE\s+t\.term_id\s*=\s*\?$',
+            900000, 1, 2);
+
+        -- SELECT * FROM blogposts WHERE pcat=?
+        -- SELECT * FROM blogposts WHERE pash=?
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (4,1,'(?i)^SELECT\s+\*\s+FROM\s+\w+\s+WHERE\s+\w+\s*=\s*\?$',900000, 1, 2);
+
+        -- SELECT views, wkviews, hviews FROM blogposts where pash=?
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (5, 1, '^(?i)SELECT\s+views,\s*wkviews,\s*hviews\s+FROM\s+blogposts\s+WHERE\s+pash\s*=\s*\?\s*$',1800000,1, 2);
+
+        -- SELECT * FROM wps9_posts WHERE ID = ? LIMIT ?
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (6,1,'(?i)^SELECT\s+\*\s+FROM\s+\w+_posts\s+WHERE\s+ID\s*=\s*\?\s+LIMIT\s+\?$',900000, 1, 2);
+
+        -- SELECT * FROM blogposts WHERE pash!=? AND pcat=? OR pcat=? ORDER BY wkviews DESC, bblid DESC LIMIT ?
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup) 
+        VALUES (7,1,
+            '^(?i)SELECT\s+\*\s+FROM\s+blogposts\s+WHERE\s+pash\s*!=\s*\?\s+AND\s+pcat\s*=\s*\?\s+OR\s+pcat\s*=\s*\?\s+ORDER BY\s+wkviews\s+DESC,\s*bblid\s+DESC\s+LIMIT\s*\?\s*$',
+            300000,
+            1,2);
+
+        -- SELECT post_date_gmt FROM wp6l_posts WHERE post_status = ? AND post_type IN (?,?,?) ORDER BY post_date_gmt DESC LIMIT ?
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (8,1,
+            '^(?i)SELECT\s+post_date_gmt\s+FROM\s+\w+_posts\s+WHERE\s+post_status\s*=\s*\?\s+AND\s+post_type\s+IN\s*\((\s*\?,\s*){2,}\s*\?\)\s+ORDER\s+BY\s+post_date_gmt\s+DESC\s+LIMIT\s*\?\s*$',
+            600000,1,2);
+
+        -- select * from `configures` where (`id` = ?) limit ?   
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (9,1,
+            '(?i)^SELECT\s+\*\s+FROM\s+`?\w+`?\s+WHERE\s*\(\s*`?\w+`?\s*=\s*\?\s*\)\s+LIMIT\s+\?$',
+            600000,1,2);
+
+        -- select `id`,`content_id`,`description` from `content_details` where exists (select * from `contents` where `content_details`.`content_id` = `contents`.`id` and `name` in (?,?)) and `language_id` = ?
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (10, 1,
+            '(?i)^SELECT\s+`id`,`content_id`,`description`\s+FROM\s+`content_details`\s+WHERE\s+EXISTS\s*\(\s*SELECT\s+\*\s+FROM\s+`contents`\s+WHERE\s+`content_details`\.`content_id`\s*=\s*`contents`\.`id`\s+AND\s+`name`\s+IN\s*\(\s*\?,\s*\?\s*\)\s*\)\s+AND\s+`language_id`\s*=\s*\?$',
+            600000, 1, 2);
+
+        -- select * from `languages` where `short_name` = ? limit ?
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (11, 1,
+            '(?i)^SELECT\s+\*\s+FROM\s+`languages`\s+WHERE\s+`short_name`\s*=\s*\?\s+LIMIT\s+\?$',
+            600000, 1, 2);
+
+        -- select * from `languages` where `is_active` = ? order by `name` asc
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (12, 1,
+            '(?i)^SELECT\s+\*\s+FROM\s+`languages`\s+WHERE\s+`is_active`\s*=\s*\?\s+ORDER\s+BY\s+`name`\s+ASC$',
+            600000, 1, 2);
+
+        -- select count(*) as aggregate from `blogs`
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (13, 1,
+            '(?i)^SELECT\s+count\(\*\)\s+AS\s+aggregate\s+FROM\s+`blogs`$',
+            600000, 1, 2);
+
+        -- select * from `templates` where `section_name` in (?) and `language_id` = ?
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (14, 1,
+            '(?i)^SELECT\s+\*\s+FROM\s+`templates`\s+WHERE\s+`section_name`\s+IN\s*\(\s*\?\s*\)\s+AND\s+`language_id`\s*=\s*\?$',
+            600000, 1, 2);
+
+        -- SELECT COUNT(*) FROM any_table LIMIT ?,?;
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (15, 1,
+            '(?i)^SELECT\s+COUNT\(\*\)\s+FROM\s+\w+\s+LIMIT\s+\?,\s*\?\s*$',
+            600000, 1, 2);
+
+        -- SELECT post_id, meta_key, meta_value FROM any_table WHERE post_id IN (?) ORDER BY meta_id ASC
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (16, 1,
+            '(?i)^SELECT\s+post_id\s*,\s*meta_key\s*,\s*meta_value\s+FROM\s+\w+\s+WHERE\s+post_id\s+IN\s*\(\s*\?\s*\)\s+ORDER\s+BY\s+meta_id\s+ASC\s*$',
+            600000, 1, 2);
+
+        -- SELECT * FROM any_table WHERE topic_id = ? LIMIT ?
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (17, 1,
+            '(?i)^SELECT\s+\*\s+FROM\s+`?\w+`?\s+WHERE\s+`?topic_id`?\s*=\s*\?\s+LIMIT\s+\?\s*$',
+            600000, 1, 2);
+
+        -- SELECT * FROM any_table WHERE pash!=? AND pcat=? AND psubcat!=? AND ... ORDER BY wkviews DESC, bblid DESC LIMIT ?
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (18, 1,
+            '(?i)^SELECT\s+\*\s+FROM\s+\w+\s+WHERE\s+pash\s*!=\s*\?\s+AND\s+pcat\s*=\s*\?\s+AND\s+psubcat\s*!=\s*\?\s+AND\s+psubcat\s*!=\s*\?\s+AND\s+psubcat\s*!=\s*\?\s+ORDER\s+BY\s+wkviews\s+DESC\s*,\s*bblid\s+DESC\s+LIMIT\s+\?\s*$',
+            600000, 1, 2);
+
+        -- SELECT COUNT(*) FROM any_table
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (19, 1,
+            '(?i)^SELECT\s+COUNT\(\*\)\s+FROM\s+\w+\s*$',
+            60000, 1, 2);
+
+        -- SELECT * FROM any_table WHERE id = ? LIMIT ?
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (20, 1,
+            '(?i)^SELECT\s+\*\s+FROM\s+`?\w+`?\s+WHERE\s+`?\w+`?\.`?id`?\s*=\s*\?\s+LIMIT\s+\?\s*$',
+            60000, 1, 2);
+
+        -- SELECT fname FROM any_table WHERE forid = ? AND funct = ? LIMIT ?
+        INSERT INTO mysql_query_rules (rule_id, active, match_digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (21, 1,
+            '(?i)^SELECT\s+fname\s+FROM\s+\w+\s+WHERE\s+forid\s*=\s*\?\s+AND\s+funct\s*=\s*\?\s+LIMIT\s+\?\s*$',
+            600000, 1, 2);
+
+        -- Digest 0x3F1C8BB2DE1336D6
+        --  SELECT SQL_CALC_FOUND_ROWS wp6l_posts.ID FROM wp6l_posts LEFT JOIN ...
+        INSERT INTO mysql_query_rules (rule_id, active,digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (30, 1, '0x3F1C8BB2DE1336D6',3600000, 1, 2);
+
+        -- Digest 0x4E8AA91C25B94233
+        --  SELECT wp0p_users.ID FROM wp0p_users INNER JOIN wp0p_usermeta ON
+        INSERT INTO mysql_query_rules (rule_id, active,digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (31, 1, '0x4E8AA91C25B94233',3600000, 1, 2);
+
+        -- Digest 0x055D80043FBD0725
+        --  select wp_posts.id,wp_posts.post_type,wp_posts.post_parent,wp_posts.post_title,? as depth...
+        INSERT INTO mysql_query_rules (rule_id, active,digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (32, 1, '0x055D80043FBD0725',3600000, 1, 2);
+
+        -- Digest 0xF6474EDDDD814C7F
+        --  select wp_posts.id,wp_posts.post_type,wp_posts.post_parent,wp_posts.post_title,? as depth...
+        INSERT INTO mysql_query_rules (rule_id, active,digest, cache_ttl, apply, destination_hostgroup)
+        VALUES (33, 1, '0xF6474EDDDD814C7F',3600000, 1, 2);
+
+        -- Rule 100: Default rule to send remaining SELECT queries to read replica
+        INSERT INTO mysql_query_rules (rule_id, active, match_pattern, re_modifiers, destination_hostgroup, apply)
+        VALUES (100, 1, '^SELECT ', 'CASELESS', 2, 1);
+
+        LOAD MYSQL QUERY RULES TO RUNTIME;
+        SAVE MYSQL QUERY RULES TO DISK;
+        EOF
+      args:
+        executable: /bin/bash
